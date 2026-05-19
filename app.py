@@ -625,40 +625,48 @@ st.caption("AI-scored call quality reports for The Sleep Company")
 # Upload section
 st.divider()
 st.subheader("📤 Score New Calls")
-st.caption("Drag and drop one or more call recordings. Lead source is auto-detected by default — override per file if needed.")
-
-audio_call_type = st.radio(
-    "Call type",
-    options=[CALL_TYPE_HUMAN, CALL_TYPE_BOT],
-    format_func=lambda v: "🧑 Human agent" if v == CALL_TYPE_HUMAN else "🤖 AI voice bot",
-    horizontal=True,
-    key="audio_call_type",
-    help="Pick 'AI voice bot' if these recordings are from your outbound voice bot platform. Human agent is the default."
-)
+st.caption("Drop audio files or a CSV containing recording URLs — or a mix of both.")
 
 uploaded_files = st.file_uploader(
-    "Drop audio files here, or click to browse (one or many)",
-    type=["mp3", "wav", "m4a", "mpeg", "mp4", "ogg", "flac", "webm"],
+    "Drop audio files (.mp3/.wav/.m4a/.mpeg/.mp4/.ogg/.flac/.webm) OR a CSV with recording URLs — or a mix of both",
+    type=["mp3", "wav", "m4a", "mpeg", "mp4", "ogg", "flac", "webm", "csv"],
     accept_multiple_files=True,
-    help="Supports up to ~25MB per file (~30 min of audio). Files are processed in parallel, up to 4 at a time.",
+    key="unified_uploader",
 )
 
-entered_agent_id = st.text_input(
-    "Agent ID (applies to all files in this batch)",
-    placeholder="optional",
-    value="",
-)
+AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".mpeg", ".mp4", ".ogg", ".flac", ".webm"}
+audio_files = [f for f in (uploaded_files or []) if Path(f.name).suffix.lower() in AUDIO_EXTS]
+csv_files   = [f for f in (uploaded_files or []) if Path(f.name).suffix.lower() == ".csv"]
 
+# Audio Settings section (only shown if there are audio files)
+entered_agent_id = ""
+audio_call_type = CALL_TYPE_HUMAN
 file_lead_sources = {}
-if uploaded_files:
+
+if audio_files:
+    st.markdown("### Audio Files Settings")
+    audio_call_type = st.radio(
+        "Call type (for audio files)",
+        options=[CALL_TYPE_HUMAN, CALL_TYPE_BOT],
+        format_func=lambda v: "🧑 Human agent" if v == CALL_TYPE_HUMAN else "🤖 AI voice bot",
+        horizontal=True,
+        key="audio_call_type",
+        help="Pick 'AI voice bot' if these recordings are from your outbound voice bot platform. Human agent is the default."
+    )
+    
+    entered_agent_id = st.text_input(
+        "Agent ID (applies to all audio files in this batch)",
+        placeholder="optional",
+        value="",
+        key="audio_agent_id"
+    )
+    
     if audio_call_type == CALL_TYPE_BOT:
-        st.info(f"🤖 All {len(uploaded_files)} file(s) will be scored against the AI Voice Bot rubric.")
-        # Build a dict where every file maps to AUTO_DETECT_KEY — the value is ignored when call_type is BOT
-        file_lead_sources = {u.name: AUTO_DETECT_KEY for u in uploaded_files}
+        st.info(f"🤖 All {len(audio_files)} file(s) will be scored against the AI Voice Bot rubric.")
+        file_lead_sources = {u.name: AUTO_DETECT_KEY for u in audio_files}
     else:
-        # Existing human-mode loop, but use HUMAN_UPLOAD_CHOICES (no ai_voice_bot in dropdown)
         st.markdown("**Lead source per file** (default: auto-detect)")
-        for uploaded in uploaded_files:
+        for uploaded in audio_files:
             cols = st.columns([3, 2])
             with cols[0]:
                 st.markdown(f"📄 **{uploaded.name}**  _({uploaded.size / 1024:.0f} KB)_")
@@ -671,191 +679,101 @@ if uploaded_files:
                     label_visibility="collapsed",
                 )
 
-n_files = len(uploaded_files) if uploaded_files else 0
-button_label = "Score this call" if n_files <= 1 else f"Score these {n_files} calls"
-score_button_disabled = n_files == 0
-
-if st.button(button_label, type="primary", disabled=score_button_disabled):
-    batch_start_time = time.time()
-    progress_bar = st.progress(0.0, text=f"Starting batch of {n_files} (up to {MAX_PARALLEL} in parallel)...")
-    status_placeholder = st.empty()
-    succeeded = []
-    failed = []
-    status_log_lines = []
-
-    def render_status():
-        completed = len(succeeded) + len(failed)
-        remaining = n_files - completed
-        lines = list(status_log_lines)
+# CSV Settings section (only shown if there are CSV files)
+csv_data_list = []
+if csv_files:
+    for csv in csv_files:
+        st.markdown("---")
+        st.markdown(f"### CSV File: **{csv.name}**")
         
-        elapsed = time.time() - batch_start_time
-        if completed > 0:
-            per_call = elapsed / completed
-            remaining_time = (n_files - completed) * per_call
-            lines.insert(
-                0,
-                f"⏱️  Elapsed: {int(elapsed // 60)}m {int(elapsed % 60)}s  •  "
-                f"ETA: {int(remaining_time // 60)}m {int(remaining_time % 60)}s  •  "
-                f"Throughput: {completed / elapsed * 60:.1f} calls/min"
-            )
+        try:
+            df = pd.read_csv(csv)
+        except Exception as e:
+            st.error(f"Failed to parse CSV {csv.name}: {e}")
+            continue
+            
+        st.dataframe(df.head(5), use_container_width=True, hide_index=True)
+        st.info(f"Detected {len(df)} rows in {csv.name}.")
 
-        if remaining > 0:
-            lines.append(f"⏳ _{remaining} file(s) still processing..._")
-        status_placeholder.markdown("\n\n".join(lines))
+        url_col = next((c for c in df.columns if any(sub in c.lower() for sub in ["url", "recording", "audio"])), None)
+        if not url_col:
+            st.error(f"No URL column detected in {csv.name}. Looking for a column with 'url', 'recording', or 'audio' in its name.")
+            continue
+        else:
+            st.success(f"🔗 URL column detected: `{url_col}`")
 
-    # Prepare jobs (we read bytes here so threads don't share the UploadedFile object)
-    jobs = []
-    for uploaded in uploaded_files:
-        jobs.append({
-            "name": uploaded.name,
-            "bytes": uploaded.getvalue(),
-            "lead_source_choice": file_lead_sources[uploaded.name],
+        ls_col = next((c for c in df.columns if "lead_source" in c.lower() or "lead source" in c.lower()), None)
+        if ls_col:
+            st.write(f"🏷️ Lead source column: `{ls_col}`")
+        else:
+            st.write("🏷️ No lead source column — every row will be auto-classified by the AI.")
+
+        agent_col = next((c for c in df.columns if c.lower() == "agent_id" or ("agent" in c.lower() and "id" in c.lower())), None)
+        csv_agent_id_fallback = ""
+        if agent_col:
+            st.write(f"👤 Agent ID column: `{agent_col}`")
+        else:
+            csv_agent_id_fallback = st.text_input("Agent ID (applies to all rows)", key=f"csv_agent_id_{csv.name}", value="")
+
+        max_rows = st.number_input(
+            "Max rows to score (0 = all rows)",
+            min_value=0, value=0, step=10,
+            key=f"csv_max_rows_{csv.name}",
+            help="0 means no cap — score every row. Set a number to limit (useful for testing or staying within API quotas)."
+        )
+        effective_n = len(df) if max_rows == 0 else min(len(df), max_rows)
+        
+        csv_call_type = st.radio(
+            f"Call type (for {csv.name})",
+            options=[CALL_TYPE_HUMAN, CALL_TYPE_BOT],
+            format_func=lambda v: "🧑 Human agent" if v == CALL_TYPE_HUMAN else "🤖 AI voice bot",
+            horizontal=True,
+            key=f"csv_call_type_{csv.name}",
+            help="If this CSV is an export from your voice bot platform, pick 'AI voice bot'. Default is human agent."
+        )
+        
+        csv_data_list.append({
+            "csv_name": csv.name,
+            "df": df,
+            "url_col": url_col,
+            "ls_col": ls_col,
+            "agent_col": agent_col,
+            "agent_id_fallback": csv_agent_id_fallback,
+            "max_rows": max_rows,
+            "effective_n": effective_n,
+            "call_type": csv_call_type
         })
 
-    with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as executor:
-        futures = {
-            executor.submit(
-                process_one_file,
-                job["name"],
-                job["bytes"],
-                job["lead_source_choice"],
-                entered_agent_id,
-                audio_call_type,
-            ): job["name"]
-            for job in jobs
-        }
-        for future in as_completed(futures):
-            filename = futures[future]
-            try:
-                result_info = future.result()
-                succeeded.append(result_info)
-                auto_tag = " (auto)" if result_info["auto_detected"] else ""
-                status_log_lines.append(
-                    f"✅ **{filename}** → {result_info['score']}/100  "
-                    f"— {result_info['lead_source']}{auto_tag}"
-                )
-            except Exception as e:
-                failed.append({"filename": filename, "error": str(e)})
-                status_log_lines.append(f"❌ **{filename}** → failed: {str(e)[:100]}")
-            done = len(succeeded) + len(failed)
-            progress_bar.progress(done / n_files, text=f"Completed {done} of {n_files}")
-            render_status()
-
-    if failed and succeeded:
-        st.warning(f"⚠️ Batch done. {len(succeeded)} succeeded, {len(failed)} failed.")
-    elif failed and not succeeded:
-        st.error(f"❌ Batch done. All {len(failed)} file(s) failed.")
-    else:
-        st.success(f"✅ Batch done. Scored {len(succeeded)} call(s) and appended to today's report.")
-
-    if succeeded:
-        st.markdown("### Batch Summary")
-        summary_df = pd.DataFrame([
-            {
-                "Filename": s["filename"],
-                "Lead Source": s["lead_source"] + (" (auto)" if s["auto_detected"] else ""),
-                "Score": s["score"],
-            }
-            for s in succeeded
-        ])
-        st.dataframe(summary_df, use_container_width=True, hide_index=True)
-
-    if failed:
-        st.markdown("### Failures")
-        for f in failed:
-            st.markdown(f"- ❌ **{f['filename']}** — {f['error']}")
-
-    if succeeded:
-        st.markdown("### Detailed Results")
-        for s in succeeded:
-            render_call_card(s["row"])
-            with st.expander(f"View transcript — {s['filename']}"):
-                tab1, tab2 = st.tabs(["Original", "English translation"])
-                with tab1:
-                    st.text(s["transcript"])
-                with tab2:
-                    st.text(s["english_translation"])
-
-# ============================================================
-# CSV Upload section
-# ============================================================
-st.divider()
-st.subheader("📋 Score from CSV (bulk URL mode)")
-st.caption(
-    "Upload a CSV containing call recording URLs. The tool downloads each "
-    "recording, transcribes, translates, and scores against the matching "
-    "rubric. Useful for CRM exports and voice bot platforms."
-)
-
-csv_call_type = st.radio(
-    "Call type",
-    options=[CALL_TYPE_HUMAN, CALL_TYPE_BOT],
-    format_func=lambda v: "🧑 Human agent" if v == CALL_TYPE_HUMAN else "🤖 AI voice bot",
-    horizontal=True,
-    key="csv_call_type",
-    help="If this CSV is an export from your voice bot platform, pick 'AI voice bot'. Default is human agent."
-)
-
-csv_upload = st.file_uploader(
-    "Drop a CSV file here, or click to browse",
-    type=["csv"],
-    accept_multiple_files=False,
-    key="csv_uploader",
-)
-
-if csv_upload is not None:
-    df = pd.read_csv(csv_upload)
-    st.dataframe(df.head(5), use_container_width=True, hide_index=True)
-    st.info(f"Detected {len(df)} rows in this CSV.")
-
-    url_col = next((c for c in df.columns if any(sub in c.lower() for sub in ["url", "recording", "audio"])), None)
-    if not url_col:
-        st.error("No URL column detected. Looking for a column with 'url', 'recording', or 'audio' in its name.")
-        st.stop()
-    else:
-        st.success(f"🔗 URL column detected: `{url_col}`")
-
-    ls_col = next((c for c in df.columns if "lead_source" in c.lower() or "lead source" in c.lower()), None)
-    if ls_col:
-        st.write(f"🏷️ Lead source column: `{ls_col}`")
-    else:
-        st.write("🏷️ No lead source column — every row will be auto-classified by the AI.")
-
-    agent_col = next((c for c in df.columns if c.lower() == "agent_id" or ("agent" in c.lower() and "id" in c.lower())), None)
-    if agent_col:
-        st.write(f"👤 Agent ID column: `{agent_col}`")
-        csv_agent_id_fallback = ""
-    else:
-        csv_agent_id_fallback = st.text_input("Agent ID (applies to all rows)", key="csv_agent_id")
-
-    max_rows = st.number_input(
-        "Max rows to score (0 = all rows)",
-        min_value=0, value=0, step=10,
-        key="csv_max_rows",
-        help="0 means no cap — score every row. Set a number to limit "
-             "(useful for testing or staying within API quotas)."
-    )
-    effective_n = len(df) if max_rows == 0 else min(len(df), max_rows)
-
-    if st.button(f"Score {effective_n} call(s) from CSV", type="primary", key="csv_score_btn"):
-        st.session_state["csv_stop_flag"] = False
+# Global scoring button
+if audio_files or csv_files:
+    total_audio = len(audio_files)
+    total_csv_rows = sum(item["effective_n"] for item in csv_data_list)
+    total_jobs = total_audio + total_csv_rows
+    button_label = f"Score {total_jobs} call(s)" if total_jobs else "Nothing to score"
+    score_button_disabled = total_jobs == 0
+    
+    st.markdown("---")
+    if st.button(button_label, type="primary", disabled=score_button_disabled, key="unified_score_btn"):
+        st.session_state["stop_flag"] = False
         
-        if st.button("🛑 Stop batch", key="csv_stop_btn"):
-            st.session_state["csv_stop_flag"] = True
+        # Display stop button placeholder
+        stop_placeholder = st.empty()
+        if stop_placeholder.button("🛑 Stop batch", key="stop_btn"):
+            st.session_state["stop_flag"] = True
             
-        csv_batch_start_time = time.time()
-        csv_progress_bar = st.progress(0.0, text=f"Starting CSV batch of {effective_n} (up to {MAX_PARALLEL} in parallel)...")
-        csv_status_placeholder = st.empty()
-        csv_succeeded = []
-        csv_failed = []
-        csv_status_log_lines = []
-        
-        def render_csv_status():
-            completed = len(csv_succeeded) + len(csv_failed)
-            remaining = effective_n - completed
-            lines = list(csv_status_log_lines)
+        batch_start_time = time.time()
+        progress_bar = st.progress(0.0, text=f"Starting batch of {total_jobs} (up to {MAX_PARALLEL} in parallel)...")
+        status_placeholder = st.empty()
+        succeeded = []
+        failed = []
+        status_log_lines = []
+
+        def render_status():
+            completed = len(succeeded) + len(failed)
+            remaining = total_jobs - completed
+            lines = list(status_log_lines)
             
-            elapsed = time.time() - csv_batch_start_time
+            elapsed = time.time() - batch_start_time
             if completed > 0:
                 per_call = elapsed / completed
                 remaining_time = remaining * per_call
@@ -867,86 +785,129 @@ if csv_upload is not None:
                 )
 
             if remaining > 0:
-                lines.append(f"⏳ _{remaining} file(s) still processing..._")
-            csv_status_placeholder.markdown("\n\n".join(lines))
-            
-        df_to_process = df.head(effective_n)
-        
+                lines.append(f"⏳ _{remaining} job(s) still processing..._")
+            status_placeholder.markdown("\n\n".join(lines))
+
+        # Build job queue
         jobs = []
-        for idx, row in df_to_process.iterrows():
+        # Audio jobs first
+        for uploaded in audio_files:
             jobs.append({
-                "url": row[url_col],
-                "lead_source": row[ls_col] if ls_col and pd.notna(row[ls_col]) and row[ls_col] in RUBRICS else AUTO_DETECT_KEY,
-                "agent_id": str(row[agent_col]) if agent_col and pd.notna(row[agent_col]) else csv_agent_id_fallback
+                "type": "audio",
+                "name": uploaded.name,
+                "bytes": uploaded.getvalue(),
+                "lead_source_choice": file_lead_sources[uploaded.name],
+                "agent_id": entered_agent_id,
+                "call_type": audio_call_type,
             })
+            
+        # CSV jobs next
+        for item in csv_data_list:
+            df_to_process = item["df"].head(item["effective_n"])
+            url_col = item["url_col"]
+            ls_col = item["ls_col"]
+            agent_col = item["agent_col"]
+            agent_id_fallback = item["agent_id_fallback"]
+            call_type = item["call_type"]
+            csv_name = item["csv_name"]
+            
+            for idx, row in df_to_process.iterrows():
+                jobs.append({
+                    "type": "csv",
+                    "csv_name": csv_name,
+                    "url": row[url_col],
+                    "lead_source": row[ls_col] if ls_col and pd.notna(row[ls_col]) and row[ls_col] in RUBRICS else AUTO_DETECT_KEY,
+                    "agent_id": str(row[agent_col]) if agent_col and pd.notna(row[agent_col]) else agent_id_fallback,
+                    "call_type": call_type,
+                })
 
         with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as executor:
             future_to_job = {}
             for job in jobs:
-                if st.session_state.get("csv_stop_flag", False):
+                if st.session_state.get("stop_flag", False):
                     break
-                    
-                def process_csv_row(job=job):
-                    audio_bytes = download_audio(job["url"])
-                    filename = derive_filename_from_url(job["url"])
-                    return process_one_file(
-                        uploaded_name=filename,
-                        uploaded_bytes=audio_bytes,
-                        lead_source_or_auto=job["lead_source"],
-                        agent_id=job["agent_id"],
-                        call_type=csv_call_type,
-                    )
                 
-                future = executor.submit(process_csv_row)
+                def run_job(j=job):
+                    if j["type"] == "audio":
+                        res = process_one_file(
+                            uploaded_name=j["name"],
+                            uploaded_bytes=j["bytes"],
+                            lead_source_or_auto=j["lead_source_choice"],
+                            agent_id=j["agent_id"],
+                            call_type=j["call_type"],
+                        )
+                        res["source"] = "Audio"
+                        return res
+                    else: # csv
+                        audio_bytes = download_audio(j["url"])
+                        filename = derive_filename_from_url(j["url"])
+                        res = process_one_file(
+                            uploaded_name=filename,
+                            uploaded_bytes=audio_bytes,
+                            lead_source_or_auto=j["lead_source"],
+                            agent_id=j["agent_id"],
+                            call_type=j["call_type"],
+                        )
+                        res["source"] = "CSV"
+                        return res
+                
+                future = executor.submit(run_job)
                 future_to_job[future] = job
                 
             for future in as_completed(future_to_job):
-                if st.session_state.get("csv_stop_flag", False):
+                if st.session_state.get("stop_flag", False):
                     break
                 job = future_to_job[future]
                 try:
                     result_info = future.result()
-                    csv_succeeded.append(result_info)
+                    succeeded.append(result_info)
                     auto_tag = " (auto)" if result_info["auto_detected"] else ""
-                    csv_status_log_lines.append(
-                        f"✅ **{result_info['filename']}** → {result_info['score']}/100  "
+                    source_label = f"[{result_info['source']}] "
+                    status_log_lines.append(
+                        f"✅ {source_label}**{result_info['filename']}** → {result_info['score']}/100  "
                         f"— {result_info['lead_source']}{auto_tag}"
                     )
                 except Exception as e:
-                    csv_failed.append({"filename": job["url"], "error": str(e)})
-                    csv_status_log_lines.append(f"❌ **{str(job['url'])[:30]}...** → failed: {str(e)[:100]}")
+                    if job["type"] == "audio":
+                        failed.append({"filename": job["name"], "source": "Audio", "error": str(e)})
+                        status_log_lines.append(f"❌ [Audio] **{job['name']}** → failed: {str(e)[:100]}")
+                    else:
+                        failed.append({"filename": job["url"], "source": "CSV", "error": str(e)})
+                        status_log_lines.append(f"❌ [CSV] **{str(job['url'])[:30]}...** → failed: {str(e)[:100]}")
                 
-                done = len(csv_succeeded) + len(csv_failed)
-                csv_progress_bar.progress(done / effective_n, text=f"Completed {done} of {effective_n}")
-                render_csv_status()
+                done = len(succeeded) + len(failed)
+                progress_bar.progress(done / total_jobs, text=f"Completed {done} of {total_jobs}")
+                render_status()
 
-        if csv_failed and csv_succeeded:
-            st.warning(f"⚠️ Batch done. {len(csv_succeeded)} succeeded, {len(csv_failed)} failed.")
-        elif csv_failed and not csv_succeeded:
-            st.error(f"❌ Batch done. All {len(csv_failed)} file(s) failed.")
+        if failed and succeeded:
+            st.warning(f"⚠️ Batch done. {len(succeeded)} succeeded, {len(failed)} failed.")
+        elif failed and not succeeded:
+            st.error(f"❌ Batch done. All {len(failed)} job(s) failed.")
         else:
-            st.success(f"✅ Batch done. Scored {len(csv_succeeded)} call(s) and appended to today's report.")
-            
-        if csv_succeeded:
+            st.success(f"✅ Batch done. Scored {len(succeeded)} call(s) and appended to today's report.")
+
+        if succeeded:
             st.markdown("### Batch Summary")
-            csv_summary_df = pd.DataFrame([
+            summary_df = pd.DataFrame([
                 {
                     "Filename": s["filename"],
+                    "Source": s["source"],
                     "Lead Source": s["lead_source"] + (" (auto)" if s["auto_detected"] else ""),
                     "Score": s["score"],
                 }
-                for s in csv_succeeded
+                for s in succeeded
             ])
-            st.dataframe(csv_summary_df, use_container_width=True, hide_index=True)
-            
-        if csv_failed:
+            st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+        if failed:
             st.markdown("### Failures")
-            for f in csv_failed:
-                st.markdown(f"- ❌ **{f['filename']}** — {f['error']}")
-                
-        if csv_succeeded:
+            for f in failed:
+                source_tag = f"[{f['source']}] " if "source" in f else ""
+                st.markdown(f"- ❌ {source_tag}**{f['filename']}** — {f['error']}")
+
+        if succeeded:
             st.markdown("### Detailed Results")
-            for s in csv_succeeded:
+            for s in succeeded:
                 render_call_card(s["row"])
                 with st.expander(f"View transcript — {s['filename']}"):
                     tab1, tab2 = st.tabs(["Original", "English translation"])
