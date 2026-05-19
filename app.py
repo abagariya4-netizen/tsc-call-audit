@@ -686,23 +686,23 @@ if audio_files:
 # CSV Settings section (only shown if there are CSV files)
 csv_data_list = []
 if csv_files:
-    for csv in csv_files:
+    for csv_file in csv_files:
         st.markdown("---")
-        st.markdown(f"### CSV File: **{csv.name}**")
+        st.markdown(f"### CSV File: **{csv_file.name}**")
         
         try:
-            csv.seek(0)  # Reset pointer to support repeated reads on rerun
-            df = pd.read_csv(csv)
+            csv_file.seek(0)  # Reset pointer to support repeated reads on rerun
+            df = pd.read_csv(csv_file)
         except Exception as e:
-            st.error(f"Failed to parse CSV {csv.name}: {e}")
+            st.error(f"Failed to parse CSV {csv_file.name}: {e}")
             continue
             
         st.dataframe(df.head(5), use_container_width=True, hide_index=True)
-        st.info(f"Detected {len(df)} rows in {csv.name}.")
+        st.info(f"Detected {len(df)} rows in {csv_file.name}.")
 
         url_col = next((c for c in df.columns if any(sub in c.lower() for sub in ["url", "recording", "audio"])), None)
         if not url_col:
-            st.error(f"No URL column detected in {csv.name}. Looking for a column with 'url', 'recording', or 'audio' in its name.")
+            st.error(f"No URL column detected in {csv_file.name}. Looking for a column with 'url', 'recording', or 'audio' in its name.")
             continue
         else:
             st.success(f"🔗 URL column detected: `{url_col}`")
@@ -718,27 +718,27 @@ if csv_files:
         if agent_col:
             st.write(f"👤 Agent ID column: `{agent_col}`")
         else:
-            csv_agent_id_fallback = st.text_input("Agent ID (applies to all rows)", key=f"csv_agent_id_{csv.name}", value="")
+            csv_agent_id_fallback = st.text_input("Agent ID (applies to all rows)", key=f"csv_agent_id_{csv_file.name}", value="")
 
         max_rows = st.number_input(
             "Max rows to score (0 = all rows)",
             min_value=0, value=0, step=10,
-            key=f"csv_max_rows_{csv.name}",
+            key=f"csv_max_rows_{csv_file.name}",
             help="0 means no cap — score every row. Set a number to limit (useful for testing or staying within API quotas)."
         )
         effective_n = len(df) if max_rows == 0 else min(len(df), max_rows)
         
         csv_call_type = st.radio(
-            f"Call type (for {csv.name})",
+            f"Call type (for {csv_file.name})",
             options=[CALL_TYPE_HUMAN, CALL_TYPE_BOT],
             format_func=lambda v: "🧑 Human agent" if v == CALL_TYPE_HUMAN else "🤖 AI voice bot",
             horizontal=True,
-            key=f"csv_call_type_{csv.name}",
+            key=f"csv_call_type_{csv_file.name}",
             help="If this CSV is an export from your voice bot platform, pick 'AI voice bot'. Default is human agent."
         )
         
         csv_data_list.append({
-            "csv_name": csv.name,
+            "csv_name": csv_file.name,
             "df": df,
             "url_col": url_col,
             "ls_col": ls_col,
