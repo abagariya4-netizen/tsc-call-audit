@@ -381,12 +381,16 @@ def _do_append_to_today_csv(row_dict):
     output_dir = Path("output")
     output_dir.mkdir(exist_ok=True)
     csv_path = output_dir / f"audit-report-{today}.csv"
-    file_exists = csv_path.exists()
+    file_exists = csv_path.exists() and csv_path.stat().st_size > 0
 
     if file_exists:
-        existing_df = pd.read_csv(csv_path, nrows=0)
-        columns = list(existing_df.columns)
-    else:
+        try:
+            existing_df = pd.read_csv(csv_path, nrows=0)
+            columns = list(existing_df.columns)
+        except Exception:
+            file_exists = False
+    
+    if not file_exists:
         all_params = set()
         for r in RUBRICS.values():
             for p_name, _, _ in r["parameters"]:
