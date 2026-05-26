@@ -16,3 +16,6 @@ __pycache__/
 
 # Test CSVs
 test-*.csv
+
+# Local persistent cache directory
+cache/

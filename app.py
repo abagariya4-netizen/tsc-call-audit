@@ -27,8 +27,36 @@ from google.genai import types
 
 from rubrics import format_rubric_for_prompt, RUBRICS
 from custom_rubrics_storage import load_custom_rubrics, save_custom_rubric, delete_custom_rubric, derive_key
+from score import score_transcript
 
-CUSTOM_RUBRICS = load_custom_rubrics()
+# Load and convert custom rubrics to the new dict structure
+def load_and_convert_custom_rubrics():
+    custom = load_custom_rubrics()
+    converted = {}
+    for k, v in custom.items():
+        params = []
+        for p in v["parameters"]:
+            if isinstance(p, tuple):
+                name, max_points, check = p
+                key = derive_key(name)
+                params.append({
+                    "key": key,
+                    "name": name,
+                    "max_points": max_points,
+                    "fatal": False,
+                    "check": check,
+                    "failure_modes": []
+                })
+            else:
+                params.append(p)
+        converted[k] = {
+            "name": v["name"],
+            "description": v.get("intent", ""),
+            "parameters": params
+        }
+    return converted
+
+CUSTOM_RUBRICS = load_and_convert_custom_rubrics()
 # Clean up deleted rubrics from the cached module dictionary
 BUILT_IN_KEYS = {"find_a_store", "arrange_callback", "inbound", "shopflo_abandoned_cart", "next_day_delivery", "no_cost_emi", "ai_voice_bot"}
 for k in list(RUBRICS.keys()):
@@ -64,6 +92,8 @@ MODEL_FALLBACK_LADDER = [
     "gemini-3-flash-preview",
 ]
 
+# "temperature": 0
+
 LEAD_SOURCE_KEYS = list(RUBRICS.keys())
 
 AUTO_DETECT_KEY = "__auto__"
@@ -73,10 +103,17 @@ UPLOAD_CHOICES = [AUTO_DETECT_KEY, "ai_voice_bot"]
 
 MAX_PARALLEL = 4
 
+def get_all_parameter_keys():
+    keys = set()
+    for r in RUBRICS.values():
+        for p in r["parameters"]:
+            keys.add(p["key"])
+    return sorted(list(keys))
+
 META_COLS = {
     "filename", "agent_id", "lead_source", "detected_language",
-    "total_score", "red_flags_triggered", "summary", "coaching_notes",
-    "model_used",
+    "total_score", "summary", "coaching",
+    "model_used", "fatal_failed", "fatal_failed_params", "raw_score",
 }
 
 # ============================================================
@@ -92,229 +129,141 @@ def format_lead_source_choice(k):
 
 
 def transcribe_audio(file_bytes, filename):
+    import deterministic_cache as dc
+    h = dc.audio_hash(file_bytes)
+    cached = dc.cache_get("transcripts", h)
+    if cached:
+        return cached["transcript"], cached["language"], cached["english"]
+        
     transcript = groq_client.audio.transcriptions.create(
         file=(filename, file_bytes),
         model="whisper-large-v3",
         response_format="verbose_json",
+        temperature=0.0,
     )
     try:
         translation = groq_client.audio.translations.create(
             file=(filename, file_bytes),
             model="whisper-large-v3",
             response_format="verbose_json",
+            temperature=0.0,
         )
         english_translation = translation.text
     except Exception:
         english_translation = transcript.text
+        
+    dc.cache_set("transcripts", h, {
+        "transcript": transcript.text,
+        "language": transcript.language,
+        "english": english_translation
+    })
     return transcript.text, transcript.language, english_translation
 
 
-def score_transcript(transcript_text, lead_source):
-    """Single-rubric scoring (used when user manually picks a lead source)."""
-    rubric_text = format_rubric_for_prompt(lead_source)
-    prompt = f"""You are a strict call-quality auditor for The Sleep Company (TSC),
-a premium mattress brand in India. You audit calls made by outbound and inbound
-sales agents to leads. The calls are typically in Hindi, English, or other
-Indian languages — score based on meaning, not language.
-
-Here is the rubric for the lead source of this call:
-
-{rubric_text}
-
-Here is the call transcript (single-speaker raw output; you must infer
-which lines are agent vs customer):
-
----
-{transcript_text}
----
-
-Score this call against the rubric. For each parameter, give:
-- "score": integer points awarded (0 to the max for that parameter)
-- "reason": one short sentence explaining the score
-
-Also list any red flags that apply (with their deduction amount).
-
-Finally compute the total score (sum of parameters MINUS red flag deductions,
-floored at 0).
-
-Generate a naturally translated English version of the transcript, formatted as a dialogue where each turn starts with "Agent:" or "Customer:" on a new line with blank lines between speaker turns. "Agent" is the TSC sales representative; "Customer" is the lead. Translate naturally (not word-for-word); preserve names, prices, store addresses, pincodes, and product names verbatim. If the call is already in English, clean it up (remove filler) and format as dialogue.
-
-Return ONLY valid JSON in this exact structure:
-
-{{
-  "english_transcript": "translated and formatted dialogue",
-  "parameters": [
-    {{"name": "...", "score": 0, "max": 0, "reason": "..."}}
-  ],
-  "red_flags_triggered": [
-    {{"description": "...", "penalty": 0}}
-  ],
-  "total_score": 0,
-  "summary": "2-3 sentence summary of agent's performance",
-  "coaching_notes": "2-3 specific things the agent should improve"
-}}
-"""
-    last_error = None
-    for model_name in MODEL_FALLBACK_LADDER:
-        try:
-            response = gemini_client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
-                ),
-            )
-            return json.loads(response.text), model_name
-        except Exception as e:
-            last_error = e
-            continue
-    raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
-
-
 def auto_classify_and_score(transcript_text):
-    """Single Gemini call that BOTH classifies the lead source AND scores against the matching rubric.
-    Returns (result_dict, model_used, lead_source)."""
-    all_rubrics_text = ""
-    for key, data in RUBRICS.items():
-        if key == "ai_voice_bot":
-            continue
-        all_rubrics_text += f"\n\n=== LEAD SOURCE KEY: {key} ===\n"
-        all_rubrics_text += format_rubric_for_prompt(key)
-
-    prompt = f"""You are a strict call-quality auditor for The Sleep Company (TSC),
-a premium mattress brand in India. You audit calls made by outbound and inbound
-sales agents to leads. The calls are typically in Hindi, English, or other
-Indian languages — work based on meaning, not language.
-
-TASK — THREE STEPS:
-
-STEP 1: Identify which of these 6 lead sources this call belongs to, based
-on the transcript content:
-
-- find_a_store: HIGH-INTENT customer searched for nearest store on WhatsApp.
-  Agent confirms store address/timings, pushes for visit.
-- arrange_callback: EXPLORATORY. Customer requested callback from website.
-  Agent qualifies needs first, then pitches.
-- inbound: HIGHEST INTENT. Customer called us. Agent listens first.
-- shopflo_abandoned_cart: HIGH INTENT. Customer added to cart but didn't buy.
-  Agent probes the blocker, removes it, closes.
-- next_day_delivery: URGENCY. Customer wants next-day delivery.
-  Agent confirms pincode, explains free pillow guarantee, closes fast.
-- no_cost_emi: PRICE SENSITIVE. Customer wants EMI option.
-  Agent explains EMI math clearly, closes.
-
-STEP 2: Apply the matching rubric (from below) to score the call.
-
-STEP 3: Generate a naturally translated English version of the transcript, formatted as a dialogue where each turn starts with "Agent:" or "Customer:" on a new line with blank lines between speaker turns. "Agent" is the TSC sales representative; "Customer" is the lead. Translate naturally (not word-for-word); preserve names, prices, store addresses, pincodes, and product names verbatim. If the call is already in English, clean it up (remove filler) and format as dialogue.
-
-ALL 6 RUBRICS:
-{all_rubrics_text}
-
-CALL TRANSCRIPT (single-speaker raw output; infer agent vs customer):
----
-{transcript_text}
----
-
-Return ONLY valid JSON in this EXACT structure:
-
-{{
-  "english_transcript": "translated and formatted dialogue",
-  "lead_source": "<one of: find_a_store, arrange_callback, inbound, shopflo_abandoned_cart, next_day_delivery, no_cost_emi>",
-  "parameters": [
-    {{"name": "...", "score": 0, "max": 0, "reason": "..."}}
-  ],
-  "red_flags_triggered": [
-    {{"description": "...", "penalty": 0}}
-  ],
-  "total_score": 0,
-  "summary": "2-3 sentence summary of agent's performance",
-  "coaching_notes": "2-3 specific things the agent should improve"
-}}
-
-The "parameters" and "red_flags_triggered" MUST match the rubric of the
-lead_source you identified — do not mix rubrics.
-"""
-    last_error = None
-    for model_name in MODEL_FALLBACK_LADDER:
-        try:
-            response = gemini_client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
-                ),
-            )
-            result = json.loads(response.text)
-            lead_source = result.get("lead_source", "find_a_store")
-            if lead_source not in RUBRICS or lead_source == "ai_voice_bot":
-                lead_source = "find_a_store"
-            return result, model_name, lead_source
-        except Exception as e:
-            last_error = e
-            continue
-    raise RuntimeError(f"All Gemini models failed in auto-classify. Last error: {last_error}")
+    """Classify lead source then score."""
+    lead_source = classify_transcript(transcript_text)
+    rubric_dict = RUBRICS[lead_source]
+    result, model_used = score_transcript(transcript_text, rubric_dict, gemini_client)
+    return result, model_used, lead_source
 
 
 def classify_transcript(english_transcript):
-    all_keys = [k for k in RUBRICS if k != "ai_voice_bot"]
+    import deterministic_cache as dc
+    all_keys = sorted([k for k in RUBRICS if k != "ai_voice_bot"])
+    
+    # 1. Classification cache check
+    key_parts = [english_transcript] + all_keys
+    h = dc.text_hash(*key_parts)
+    cached = dc.cache_get("classifications", h)
+    if cached:
+        return cached["lead_source"]
+        
     desc_list = []
     for k in all_keys:
-        desc = RUBRICS[k].get("intent", RUBRICS[k].get("description", ""))
+        desc = RUBRICS[k].get("description", "")
         desc_list.append(f"- {k}: {desc}")
     desc_str = "\n".join(desc_list)
-    
-    prompt = f"""SYSTEM: You are classifying calls into one of the following lead source categories. Pick exactly ONE category that best fits the transcript.
+    keys_str = ", ".join(f"'{k}'" for k in all_keys)
 
-Categories:
+    prompt = f"""You are a strict call classifier. Classify this call into exactly ONE lead source category from the allowed categories listed below. Return ONLY valid JSON matching the exact schema specified.
+
+Allowed categories:
+{keys_str}
+
+Category descriptions:
 {desc_str}
 
 Transcript:
 {english_transcript}
 
-Respond with ONLY the category key, no other text."""
+Respond with a JSON object of this exact shape:
+{{"lead_source": "<key>"}}
 
+CRITICAL INSTRUCTIONS:
+1. The value for "lead_source" MUST be EXACTLY one of the allowed categories: {keys_str}. Do not invent new categories.
+2. Respond with EXACTLY one of these categories and nothing else in the JSON.
+3. If you are uncertain or if multiple categories could apply, pick the FIRST listed category that could plausibly apply (deterministic tie-breaking).
+"""
+
+    last_error = None
     for model_name in MODEL_FALLBACK_LADDER:
-        try:
-            response = gemini_client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-            )
-            val = response.text.strip().lower()
-            if val in RUBRICS and val != "ai_voice_bot":
-                return val
-            for k in all_keys:
-                if k in val:
-                    return k
-            return "find_a_store"
-        except Exception:
-            pass
-    return "find_a_store"
+        for _attempt in range(3):
+            try:
+                response = gemini_client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0,
+                        top_p=0.0,
+                        top_k=1,
+                        response_mime_type="application/json",
+                        seed=42
+                    ),
+                )
+                data = json.loads(response.text.strip())
+                val = str(data.get("lead_source", "")).strip().lower()
+                if val in RUBRICS and val != "ai_voice_bot":
+                    dc.cache_set("classifications", h, {"lead_source": val})
+                    return val
+                for k in all_keys:
+                    if k in val:
+                        dc.cache_set("classifications", h, {"lead_source": k})
+                        return k
+            except Exception as e:
+                last_error = e
+                continue
+                
+    fallback_val = all_keys[0] if all_keys else "find_a_store"
+    dc.cache_set("classifications", h, {"lead_source": fallback_val})
+    return fallback_val
 
 
 def build_csv_row(filename, agent_id, lead_source, language, result, model_used):
     row = {
         "filename": filename,
-        "agent_id": agent_id,
         "lead_source": lead_source,
-        "detected_language": language,
+        "agent_id": agent_id,
         "total_score": result.get("total_score", 0),
+        "pass_fail": result.get("pass_fail", ""),
+        "fatal_failed": str(result.get("fatal_failed", False)),
+        "fatal_failed_params": ", ".join(result.get("fatal_failed_params", [])),
+        "red_flags_triggered": ", ".join(result.get("red_flags_triggered", [])),
+        "red_flag_deduction": result.get("red_flag_deduction", 0),
         "summary": result.get("summary", ""),
-        "coaching_notes": result.get("coaching_notes", ""),
+        "coaching": result.get("coaching", ""),
+        "detected_language": language,
         "model_used": model_used,
+        "raw_score": result.get("raw_score", 0)
     }
-    for p in result.get("parameters", []):
-        name = p.get("name", "")
-        score = p.get("score", 0)
-        maxv = p.get("max", 0)
-        reason = p.get("reason", "")
-        if name:
-            row[name] = f"{score}/{maxv} - {reason}"
-    rfs = result.get("red_flags_triggered", [])
-    rf_strs = [
-        f"{rf.get('description', '')} ({rf.get('penalty', 0)})"
-        for rf in rfs
-    ]
-    row["red_flags_triggered"] = "; ".join(rf_strs)
+    
+    ps = result.get("parameter_scores", {})
+    for p_key in get_all_parameter_keys():
+        if p_key in ps:
+            row[p_key] = ps[p_key]["verdict"]
+        else:
+            row[p_key] = ""
+            
     return row
 
 
@@ -325,20 +274,13 @@ def _do_append_to_today_csv(row_dict):
     csv_path = output_dir / f"audit-report-{today}.csv"
     file_exists = csv_path.exists()
 
-    if file_exists:
-        existing_df = pd.read_csv(csv_path, nrows=0)
-        columns = list(existing_df.columns)
-    else:
-        all_params = set()
-        for r in RUBRICS.values():
-            for p_name, _, _ in r["parameters"]:
-                all_params.add(p_name)
-        sorted_params = sorted(all_params)
-        columns = (
-            ["filename", "agent_id", "lead_source", "detected_language", "total_score"]
-            + sorted_params
-            + ["red_flags_triggered", "summary", "coaching_notes", "model_used"]
-        )
+    all_params = get_all_parameter_keys()
+    columns = (
+        ["filename", "lead_source", "agent_id", "total_score", "pass_fail", "fatal_failed", "fatal_failed_params"]
+        + all_params
+        + ["red_flags_triggered", "red_flag_deduction"]
+        + ["summary", "coaching", "detected_language", "model_used", "raw_score"]
+    )
 
     with open(csv_path, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")
@@ -417,7 +359,8 @@ def process_one_file(uploaded_name, uploaded_bytes, lead_source_or_auto, agent_i
         english_transcript = result.get("english_transcript", english_transcript)
     else:
         lead_source = lead_source_or_auto
-        result, model_used = score_transcript(transcript_text, lead_source)
+        rubric_dict = RUBRICS[lead_source]
+        result, model_used = score_transcript(transcript_text, rubric_dict, gemini_client)
         english_transcript = result.get("english_transcript", english_transcript)
 
     safe_filename = save_recording_and_transcript(
@@ -450,6 +393,7 @@ def process_one_file(uploaded_name, uploaded_bytes, lead_source_or_auto, agent_i
         "row": display_row,
         "transcript": transcript_text,
         "english_transcript": english_transcript,
+        "parameter_scores": result.get("parameter_scores")
     }
 
 
@@ -477,51 +421,90 @@ def load_transcripts_from_disk(filename):
     return orig, en
 
 
-def render_call_card(row, transcript_text=None, english_transcript=None):
+def render_call_card(row, transcript_text=None, english_transcript=None, parameter_scores=None):
     score = int(row["total_score"])
+    pass_fail = row.get("pass_fail", "")
+    
     if score >= 80:
         score_emoji = "🟢"
     elif score >= 50:
         score_emoji = "🟡"
     else:
         score_emoji = "🔴"
+    
+    badge_html = ""
+    if pass_fail == "Pass":
+        badge_html = "<span style='color: green; font-weight: bold;'>PASS</span>"
+    elif pass_fail == "Fail":
+        badge_html = "<span style='color: red; font-weight: bold;'>FAIL</span>"
+    
     title = (
         f"{score_emoji}  **{row['filename']}**"
-        f"  —  Score: **{score} / 100**"
+        f"  —  Score: **{score} / 100** {badge_html}"
         f"  —  Agent: {row['agent_id']}"
         f"  —  {row['lead_source']}"
     )
     with st.expander(title):
+        # Display Red Flags alert if any were triggered
+        rf_trig = row.get("red_flags_triggered", "")
+        if isinstance(rf_trig, list):
+            red_flags_triggered = rf_trig
+        elif isinstance(rf_trig, str) and rf_trig.strip():
+            if rf_trig.startswith("["):
+                try:
+                    import ast
+                    red_flags_triggered = ast.literal_eval(rf_trig)
+                except Exception:
+                    red_flags_triggered = [x.strip() for x in rf_trig.replace("[","").replace("]","").replace("'","").replace('"',"").split(",") if x.strip()]
+            else:
+                red_flags_triggered = [x.strip() for x in rf_trig.split(",") if x.strip()]
+        else:
+            red_flags_triggered = []
+            
+        red_flag_deduction = row.get("red_flag_deduction", 0)
+        try:
+            red_flag_deduction = int(red_flag_deduction)
+        except Exception:
+            red_flag_deduction = 0
+            
+        if red_flags_triggered and red_flag_deduction != 0:
+            st.error(f"⚠️ **Red Flag(s) Triggered:** {', '.join(red_flags_triggered)} ({red_flag_deduction} pts deducted)")
+
         st.markdown("### Summary")
         st.write(row["summary"])
-        st.markdown("### Coaching Notes")
-        st.write(row["coaching_notes"])
-        st.markdown("### Parameter Scores")
-        any_param = False
-        for col in row.keys():
-            if col in META_COLS:
-                continue
-            val = row[col]
-            if pd.notna(val) and str(val).strip():
-                st.markdown(f"- **{col}**: {val}")
-                any_param = True
-        if not any_param:
-            st.markdown("_No parameter scores recorded._")
-        st.markdown("### Red Flags")
-        red_flags = row.get("red_flags_triggered", "")
-        if pd.notna(red_flags) and str(red_flags).strip():
-            for rf in str(red_flags).split(";"):
-                rf = rf.strip()
-                if rf:
-                    st.markdown(f"- ⚠️ {rf}")
-        else:
-            st.markdown("_None_")
+        st.markdown("### Coaching Points")
+        coaching_text = row.get("coaching", row.get("coaching_notes", ""))
+        st.write(coaching_text)
         
+        st.markdown("### Parameter Scores")
+        if parameter_scores:
+            for key, p in parameter_scores.items():
+                st.markdown(
+                    f"- **{p['name']}** ({p['points_max']} pts max): "
+                    f"**{p['verdict']}** ({p['points_earned']}/{p['points_max']} pts) "
+                    f"— *{p['reason']}*"
+                )
+        else:
+            all_params = get_all_parameter_keys()
+            for col in row.index if hasattr(row, "index") else row.keys():
+                if col in all_params:
+                    val = row[col]
+                    if pd.notna(val) and str(val).strip():
+                        display_name = col
+                        max_points = ""
+                        for r in RUBRICS.values():
+                            for p in r["parameters"]:
+                                if p["key"] == col:
+                                    display_name = p["name"]
+                                    max_points = f" ({p['max_points']} pts)"
+                                    break
+                        st.markdown(f"- **{display_name}**{max_points}: {val}")
+
         if english_transcript and str(english_transcript).strip():
             st.markdown("### 📄 English Transcript")
             formatted_en = str(english_transcript).replace("\n", "  \n")
             st.markdown(formatted_en)
-            
+
         if transcript_text and str(transcript_text).strip():
             with st.expander("View original transcript (untranslated)"):
                 st.text(transcript_text)
@@ -698,7 +681,7 @@ call_type_choice = st.radio(
     radio_label,
     options=["🧑 Human agent", "🤖 AI voice bot"],
     index=0,
-    help="Human agent = uses TSC sales rep rubrics (auto-classified across 6 lead sources unless overridden). AI voice bot = uses the AI Voice Bot rubric for all calls.",
+    help="Human agent = uses TSC sales rep rubrics (auto-classified across lead sources unless overridden). AI voice bot = uses the AI Voice Bot rubric for all calls.",
     horizontal=True,
 )
 
@@ -808,7 +791,7 @@ if call_type_choice == "🧑 Human agent":
                     st.success("Saved! Refresh the page to see it in the lead source list.")
                     
         st.markdown("**Existing custom rubrics:**")
-        crubrics = load_custom_rubrics()
+        crubrics = load_and_convert_custom_rubrics()
         if not crubrics:
             st.caption("None yet.")
         for k, r in crubrics.items():
@@ -1143,7 +1126,12 @@ if score_clicked:
         if succeeded:
             st.markdown("### Detailed Results")
             for s in succeeded:
-                render_call_card(s["row"], transcript_text=s["transcript"], english_transcript=s.get("english_transcript"))
+                render_call_card(
+                    s["row"],
+                    transcript_text=s["transcript"],
+                    english_transcript=s.get("english_transcript"),
+                    parameter_scores=s.get("parameter_scores")
+                )
                 with st.expander(f"View transcript — {s['filename']}"):
                     st.text(s["transcript"])
 
