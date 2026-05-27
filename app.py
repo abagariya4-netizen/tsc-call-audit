@@ -228,7 +228,7 @@ def auto_classify_and_score(transcript_text):
 
 def classify_transcript(english_transcript):
     import deterministic_cache as dc
-    all_keys = sorted([k for k in RUBRICS if k != "ai_voice_bot"])
+    all_keys = sorted([k for k in RUBRICS if k not in ("ai_voice_bot", "sales_team")])
     
     # 1. Classification cache check
     key_parts = [english_transcript] + all_keys
@@ -292,7 +292,7 @@ CRITICAL INSTRUCTIONS:
                 last_error = e
                 continue
                 
-    fallback_val = all_keys[0] if all_keys else "find_a_store"
+    fallback_val = all_keys[0] if all_keys else "inbound"
     dc.cache_set("classifications", h, {"lead_source": fallback_val})
     return fallback_val
 
@@ -550,7 +550,7 @@ def render_call_card(row, transcript_text=None, english_transcript=None, paramet
                 
                 table_rows.append({
                     "Parameter Name": name_str,
-                    "Verdict (Yes/No/NA)": verdict,
+                    "Verdict": verdict,
                     "Points Earned": "NA" if verdict == "NA" else points_earned,
                     "Max Points": points_max,
                     "Reason from transcript": p["reason"]
@@ -572,11 +572,22 @@ def render_call_card(row, transcript_text=None, english_transcript=None, paramet
                                     
                         name_str = display_name
                         verdict = str(val).strip()
-                        points_earned = points_max if verdict == "Yes" else 0
+                        
+                        try:
+                            if verdict == "NA":
+                                points_earned = 0
+                            elif verdict == "Yes":
+                                points_earned = points_max
+                            elif verdict == "No":
+                                points_earned = 0
+                            else:
+                                points_earned = int(float(verdict))
+                        except ValueError:
+                            points_earned = 0
                         
                         table_rows.append({
                             "Parameter Name": name_str,
-                            "Verdict (Yes/No/NA)": verdict,
+                            "Verdict": verdict,
                             "Points Earned": "NA" if verdict == "NA" else points_earned,
                             "Max Points": points_max,
                             "Reason from transcript": "N/A"
@@ -955,10 +966,9 @@ if call_type_choice == "🧑 Human agent":
         pending_count = sum(1 for v in st.session_state["preview_jobs"].values() if v == "pending...")
         
         # Render the table headers
-        tcol1, tcol2, tcol3, tcol4, tcol5 = st.columns([0.5, 3.5, 2.5, 2.5, 2.0])
+        tcol1, tcol2, tcol4, tcol5 = st.columns([0.5, 5.0, 2.5, 2.0])
         tcol1.markdown("**#**")
         tcol2.markdown("**Filename / URL**")
-        tcol3.markdown("**CRM Lead Source**")
         tcol4.markdown("**Mapped Rubric**")
         tcol5.markdown("**Override**")
         
@@ -966,22 +976,14 @@ if call_type_choice == "🧑 Human agent":
         
         render_limit = min(N_preview, 100)
         for i in range(render_limit):
-            col1, col2, col3, col4, col5 = st.columns([0.5, 3.5, 2.5, 2.5, 2.0])
+            col1, col2, col4, col5 = st.columns([0.5, 5.0, 2.5, 2.0])
             url = str(csv_df.iloc[i][detected_url_col])
             display_url = url if len(url) < 40 else url[:37] + "..."
-            
-            # CSV Lead Source value
-            csv_ls_val = "N/A"
-            if detected_ls_col:
-                val = csv_df.iloc[i].get(detected_ls_col)
-                if pd.notna(val) and str(val).strip():
-                    csv_ls_val = str(val).strip()
                     
             auto_val = st.session_state["preview_jobs"].get(i, "pending...")
                 
             col1.write(f"{i+1}")
             col2.write(display_url)
-            col3.write(csv_ls_val)
             col4.write(auto_val)
             
             def make_on_change(idx):

@@ -68,16 +68,17 @@ def score_transcript(transcript_text, rubric_dict, gemini_client, english_transc
 You audit calls to evaluate agents or bots. The calls are typically in Hindi, English, or other Indian languages (like Hinglish) — score based on meaning, not language.
 
 CRITICAL AUDITOR INSTRUCTIONS:
-- Score each parameter Yes No or NA only
-- Yes means agent clearly and completely performed this behavior
-- No means agent clearly failed or missed this behavior
-- NA means this parameter genuinely did not apply to this call
-- When evidence is ambiguous default to No
-- For complaint score NA unless customer explicitly raised a complaint during the call
-- For ownership_resolution score based only on whether the information spoken in the call was accurate and complete
+- Score each parameter with an integer from 0 up to its maximum points, or "NA"
+- Full points means the agent clearly and completely performed this behavior
+- Partial points should be awarded if the agent partially performed the behavior but missed some aspects
+- 0 points means the agent completely failed or missed this behavior
+- NA means this parameter genuinely did not apply to this call (i.e. no opportunity existed for the agent to demonstrate this)
+- When evidence is ambiguous, be conservative with points
+- For complaint, score NA unless the customer explicitly raised a complaint during the call
+- For ownership_resolution, score based only on whether the information spoken in the call was accurate and complete
 - For parameters that were not discussed or reached during the call (e.g., if the call ended early, the customer hung up abruptly, or the conversation did not progress to a specific stage), score them as NA. This ensures the agent is only graded on the portion of the call that actually transpired, giving partial marks up to the point of discussion and scaling the score proportionally.
 - If the call is extremely short, silent, has no actual conversation, consists only of automated messages/voicemails, or the customer hangs up immediately without any actual dialogue (e.g. immediate disconnect or wrong number), score every single parameter as NA so that the entire call is graded as NA.
-- Be strict — a score of 100 should be genuinely rare and only awarded when every single parameter was clearly and fully completed by the agent
+- Be strict — full points should be genuinely earned.
 
 Here is the rubric for this call:
 LEAD SOURCE: {rubric_dict['name']}
@@ -97,7 +98,7 @@ Force a response with a JSON object of this exact shape:
 {{
   "english_transcript": "translated and formatted dialogue",
   "scores": {{
-    {", ".join(f'"{p["key"]}": "Yes" | "No" | "NA"' for p in rubric_dict["parameters"])}
+    {", ".join(f'"{p["key"]}": <integer between 0 and {p["max_points"]}, or "NA">' for p in rubric_dict["parameters"])}
   }},
   "reasons": {{
     {", ".join(f'"{p["key"]}": "1-2 sentence reason citing what was observed"' for p in rubric_dict["parameters"])}
@@ -139,8 +140,15 @@ Force a response with a JSON object of this exact shape:
                     k = p["key"]
                     if k not in result["scores"] or k not in result["reasons"]:
                         raise ValueError(f"Missing parameter key: {k}")
-                    if result["scores"][k] not in ("Yes", "No", "NA"):
-                        raise ValueError(f"Invalid verdict for key {k}: {result['scores'][k]}")
+                    val = result["scores"][k]
+                    if val != "NA":
+                        try:
+                            val_int = int(val)
+                            if val_int < 0 or val_int > p["max_points"]:
+                                raise ValueError(f"Score {val_int} out of bounds for {k}")
+                            result["scores"][k] = val_int
+                        except ValueError:
+                            raise ValueError(f"Invalid verdict for key {k}: {val}")
                         
                 scores = result["scores"]
                 reasons = result["reasons"]
@@ -149,7 +157,7 @@ Force a response with a JSON object of this exact shape:
                 english_transcript = result.get("english_transcript", "")
                 
                 # Compute points & final score based on new scoring math!
-                yes_points = sum(p["max_points"] for p in rubric_dict["parameters"] if scores.get(p["key"]) == "Yes")
+                yes_points = sum(scores[p["key"]] for p in rubric_dict["parameters"] if scores.get(p["key"]) != "NA")
                 applicable_points = sum(p["max_points"] for p in rubric_dict["parameters"] if scores.get(p["key"]) != "NA")
                 
                 if applicable_points == 0:
@@ -161,6 +169,12 @@ Force a response with a JSON object of this exact shape:
                 
                 fatal_failed = False
                 fatal_failed_params = []
+                
+                # Fatal failure only triggers if advisor_behaviour == 0 OR ownership_resolution == 0
+                for fatal_key in ["advisor_behaviour", "ownership_resolution"]:
+                    if scores.get(fatal_key) == 0:  # Int 0, not "NA" or partial
+                        fatal_failed = True
+                        fatal_failed_params.append(fatal_key)
                 
                 lsq_caveat = "Note: LSQ documentation and CRM tagging cannot be verified from transcript alone. Ownership score reflects verbal accuracy in the call only."
                 
@@ -180,7 +194,7 @@ Force a response with a JSON object of this exact shape:
                         p["key"]: {
                             "name": p["name"],
                             "verdict": scores.get(p["key"], "NA"),
-                            "points_earned": p["max_points"] if scores.get(p["key"]) == "Yes" else 0,
+                            "points_earned": scores.get(p["key"]) if scores.get(p["key"]) != "NA" else 0,
                             "points_max": p["max_points"],
                             "reason": reasons.get(p["key"], "")
                         } for p in rubric_dict["parameters"]
