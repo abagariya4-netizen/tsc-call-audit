@@ -33,7 +33,7 @@ COMMON_PARAMETERS = [
     },
     {
         "key": "ownership_resolution",
-        "name": "Ownership & Resolution",
+        "name": "Ownership – Resolution & Assistance",
         "max_points": 10,
         "fatal": True,
         "check": "Did agent take ownership — provide correct/complete info, note conversation properly, tag the call per query?",
