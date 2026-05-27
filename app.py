@@ -483,6 +483,71 @@ def render_call_card(row, transcript_text=None, english_transcript=None, paramet
     score_raw = row["total_score"]
     is_na = score_raw == "NA" or str(score_raw).strip().upper() == "NA"
     
+    # Calculate parameter scores and totals first
+    table_rows = []
+    total_earned = 0
+    total_applicable = 0
+    
+    if parameter_scores:
+        for key, p in parameter_scores.items():
+            name_str = p["name"]
+            verdict = p["verdict"]
+            points_earned = p["points_earned"]
+            points_max = p["points_max"]
+            
+            if verdict != "NA":
+                total_earned += points_earned
+                total_applicable += points_max
+                
+            table_rows.append({
+                "Parameter Name": name_str,
+                "Verdict": verdict,
+                "Points Earned": "NA" if verdict == "NA" else points_earned,
+                "Max Points": points_max,
+                "Reason from transcript": p["reason"]
+            })
+    else:
+        all_params = get_all_parameter_keys()
+        for col in (row.index if hasattr(row, "index") else row.keys()):
+            if col in all_params:
+                val = row[col]
+                if pd.notna(val) and str(val).strip():
+                    display_name = col
+                    points_max = 0
+                    for r in RUBRICS.values():
+                        for p in r["parameters"]:
+                            if p["key"] == col:
+                                display_name = p["name"]
+                                points_max = p["max_points"]
+                                break
+                                
+                    name_str = display_name
+                    verdict = str(val).strip()
+                    
+                    try:
+                        if verdict == "NA":
+                            points_earned = 0
+                        elif verdict == "Yes":
+                            points_earned = points_max
+                        elif verdict == "No":
+                            points_earned = 0
+                        else:
+                            points_earned = int(float(verdict))
+                    except ValueError:
+                        points_earned = 0
+                        
+                    if verdict != "NA":
+                        total_earned += points_earned
+                        total_applicable += points_max
+                        
+                    table_rows.append({
+                        "Parameter Name": name_str,
+                        "Verdict": verdict,
+                        "Points Earned": "NA" if verdict == "NA" else points_earned,
+                        "Max Points": points_max,
+                        "Reason from transcript": "N/A"
+                    })
+    
     if is_na:
         score = "NA"
         pass_fail = "NA"
@@ -506,9 +571,11 @@ def render_call_card(row, transcript_text=None, english_transcript=None, paramet
         else:
             score_emoji = "🔴"
             
+        score_display = f"{score}% ({total_earned}/{total_applicable})" if total_applicable > 0 else f"{score}%"
+            
         title = (
             f"{score_emoji}  **{row['filename']}**"
-            f"  —  Score: **{score} / 100** ({pass_fail})"
+            f"  —  Score: **{score_display}** ({pass_fail})"
             f"  —  Agent: {row['agent_id']}"
             f"  —  {RUBRICS.get(row['lead_source'], {}).get('name', row['lead_source'])}"
         )
@@ -527,7 +594,7 @@ def render_call_card(row, transcript_text=None, english_transcript=None, paramet
             if score == "NA":
                 st.metric(label="Total Score", value="NA")
             else:
-                st.metric(label="Total Score", value=f"{score} / 100")
+                st.metric(label="Total Score", value=score_display)
             
         st.markdown("### Summary")
         st.write(row["summary"])
@@ -536,66 +603,11 @@ def render_call_card(row, transcript_text=None, english_transcript=None, paramet
         coaching_text = row.get("coaching", row.get("coaching_notes", ""))
         st.write(coaching_text)
         
-        st.markdown("### Parameter Scores")
-        table_rows = []
-        rubric_key = row.get("lead_source")
-        
-        if parameter_scores:
-            for key, p in parameter_scores.items():
-                name_str = p["name"]
-                
-                verdict = p["verdict"]
-                points_earned = p["points_earned"]
-                points_max = p["points_max"]
-                
-                table_rows.append({
-                    "Parameter Name": name_str,
-                    "Verdict": verdict,
-                    "Points Earned": "NA" if verdict == "NA" else points_earned,
-                    "Max Points": points_max,
-                    "Reason from transcript": p["reason"]
-                })
-        else:
-            all_params = get_all_parameter_keys()
-            for col in (row.index if hasattr(row, "index") else row.keys()):
-                if col in all_params:
-                    val = row[col]
-                    if pd.notna(val) and str(val).strip():
-                        display_name = col
-                        points_max = 0
-                        for r in RUBRICS.values():
-                            for p in r["parameters"]:
-                                if p["key"] == col:
-                                    display_name = p["name"]
-                                    points_max = p["max_points"]
-                                    break
-                                    
-                        name_str = display_name
-                        verdict = str(val).strip()
-                        
-                        try:
-                            if verdict == "NA":
-                                points_earned = 0
-                            elif verdict == "Yes":
-                                points_earned = points_max
-                            elif verdict == "No":
-                                points_earned = 0
-                            else:
-                                points_earned = int(float(verdict))
-                        except ValueError:
-                            points_earned = 0
-                        
-                        table_rows.append({
-                            "Parameter Name": name_str,
-                            "Verdict": verdict,
-                            "Points Earned": "NA" if verdict == "NA" else points_earned,
-                            "Max Points": points_max,
-                            "Reason from transcript": "N/A"
-                        })
-                        
         if table_rows:
+            st.markdown("### Parameter Scores")
             st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
         else:
+            st.markdown("### Parameter Scores")
             st.info("No parameters found for this rubric.")
 
         if english_transcript and str(english_transcript).strip():
