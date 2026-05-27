@@ -76,6 +76,7 @@ CRITICAL AUDITOR INSTRUCTIONS:
 - For complaint score NA unless customer explicitly raised a complaint during the call
 - For ownership_resolution score based only on whether the information spoken in the call was accurate and complete
 - For parameters that were not discussed or reached during the call (e.g., if the call ended early, the customer hung up abruptly, or the conversation did not progress to a specific stage), score them as NA. This ensures the agent is only graded on the portion of the call that actually transpired, giving partial marks up to the point of discussion and scaling the score proportionally.
+- If the call is extremely short, silent, has no actual conversation, consists only of automated messages/voicemails, or the customer hangs up immediately without any actual dialogue (e.g. immediate disconnect or wrong number), score every single parameter as NA so that the entire call is graded as NA.
 - Be strict — a score of 100 should be genuinely rare and only awarded when every single parameter was clearly and fully completed by the agent
 
 Here is the rubric for this call:
@@ -151,8 +152,12 @@ Force a response with a JSON object of this exact shape:
                 yes_points = sum(p["max_points"] for p in rubric_dict["parameters"] if scores.get(p["key"]) == "Yes")
                 applicable_points = sum(p["max_points"] for p in rubric_dict["parameters"] if scores.get(p["key"]) != "NA")
                 
-                final_score = round((yes_points / applicable_points) * 100) if applicable_points > 0 else 0
-                pass_fail = "Pass" if final_score >= 85 else "Fail"
+                if applicable_points == 0:
+                    final_score = "NA"
+                    pass_fail = "NA"
+                else:
+                    final_score = round((yes_points / applicable_points) * 100)
+                    pass_fail = "Pass" if final_score >= 85 else "Fail"
                 
                 fatal_failed = False
                 fatal_failed_params = []

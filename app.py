@@ -480,24 +480,38 @@ def load_transcripts_from_disk(filename):
 
 
 def render_call_card(row, transcript_text=None, english_transcript=None, parameter_scores=None):
-    score = int(row["total_score"])
-    pass_fail = row.get("pass_fail", "")
-    if not pass_fail:
-        pass_fail = "Pass" if score >= 85 else "Fail"
+    score_raw = row["total_score"]
+    is_na = score_raw == "NA" or str(score_raw).strip().upper() == "NA"
     
-    if score >= 85:
-        score_emoji = "🟢"
-    elif score >= 50:
-        score_emoji = "🟡"
+    if is_na:
+        score = "NA"
+        pass_fail = "NA"
+        score_emoji = "⚪"
+        title = (
+            f"{score_emoji}  **{row['filename']}**"
+            f"  —  Score: **NA** (Not Applicable)"
+            f"  —  Agent: {row['agent_id']}"
+            f"  —  {RUBRICS.get(row['lead_source'], {}).get('name', row['lead_source'])}"
+        )
     else:
-        score_emoji = "🔴"
+        score = int(score_raw)
+        pass_fail = row.get("pass_fail", "")
+        if not pass_fail:
+            pass_fail = "Pass" if score >= 85 else "Fail"
         
-    title = (
-        f"{score_emoji}  **{row['filename']}**"
-        f"  —  Score: **{score} / 100** ({pass_fail})"
-        f"  —  Agent: {row['agent_id']}"
-        f"  —  {RUBRICS.get(row['lead_source'], {}).get('name', row['lead_source'])}"
-    )
+        if score >= 85:
+            score_emoji = "🟢"
+        elif score >= 50:
+            score_emoji = "🟡"
+        else:
+            score_emoji = "🔴"
+            
+        title = (
+            f"{score_emoji}  **{row['filename']}**"
+            f"  —  Score: **{score} / 100** ({pass_fail})"
+            f"  —  Agent: {row['agent_id']}"
+            f"  —  {RUBRICS.get(row['lead_source'], {}).get('name', row['lead_source'])}"
+        )
     
     with st.expander(title):
         # Green PASS or red FAIL badge prominently at the top
@@ -505,10 +519,15 @@ def render_call_card(row, transcript_text=None, english_transcript=None, paramet
         with col_badge:
             if pass_fail == "Pass":
                 st.success("🟢 **PASS**")
-            else:
+            elif pass_fail == "Fail":
                 st.error("🔴 **FAIL**")
+            else:
+                st.info("⚪ **NOT APPLICABLE**")
         with col_score:
-            st.metric(label="Total Score", value=f"{score} / 100")
+            if score == "NA":
+                st.metric(label="Total Score", value="NA")
+            else:
+                st.metric(label="Total Score", value=f"{score} / 100")
             
         st.markdown("### Summary")
         st.write(row["summary"])
