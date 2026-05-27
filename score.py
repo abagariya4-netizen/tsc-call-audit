@@ -203,7 +203,8 @@ Force a response with a JSON object of this exact shape:
                 fatal_failed_params = []
                 for p in rubric_dict["parameters"]:
                     if p.get("fatal"):
-                        if scores.get(p["key"]) == "No":
+                        verdict = str(scores.get(p["key"], "NA")).strip()
+                        if verdict.lower() == "no":
                             fatal_failed = True
                             fatal_failed_params.append(p["name"])
                 
