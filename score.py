@@ -76,7 +76,9 @@ CRITICAL AUDITOR INSTRUCTIONS:
 - When evidence is ambiguous, be conservative with points
 - For complaint, score NA unless the customer explicitly raised a complaint during the call
 - For ownership_resolution, score based only on whether the information spoken in the call was accurate and complete
-- For parameters that were not discussed or reached during the call (e.g., if the call ended early, the customer hung up abruptly, or the conversation did not progress to a specific stage), score them as NA. This ensures the agent is only graded on the portion of the call that actually transpired, giving partial marks up to the point of discussion and scaling the score proportionally.
+- For closing, if no evidence of closing is found (e.g. call cut), consider that NA (so scoring is not affected). If closing occurs, score up to 10 points based on quality.
+- For all parameters, evaluate strictly based on the conversation that has happened. If a call was cut prematurely, score parameters based on the available transcript only (e.g. give partial marks if partial ownership was shown before the cut).
+- For parameters that were not discussed or reached during the call (e.g., if the call ended early, the customer hung up abruptly, or the conversation did not progress to a specific stage), score them as NA. This ensures the agent is only graded on the portion of the call that actually transpired.
 - If the call is extremely short, silent, has no actual conversation, consists only of automated messages/voicemails, or the customer hangs up immediately without any actual dialogue (e.g. immediate disconnect or wrong number), score every single parameter as NA so that the entire call is graded as NA.
 - Be strict — full points should be genuinely earned.
 

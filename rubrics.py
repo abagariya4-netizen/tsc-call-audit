@@ -94,8 +94,8 @@ HUMAN_PARAMETERS = [
     {
         "key": "closing",
         "name": "Closing",
-        "max_points": 15,
-        "check": "Did agent inform next steps, ask if customer needed further help, provide brand closing (Sleep Well with The Sleep Company), and create urgency where appropriate?",
+        "max_points": 10,
+        "check": "Did agent inform next steps, ask if customer needed further help, provide brand closing (Sleep Well with The Sleep Company), and create urgency where appropriate? (If no evidence of closing or call cut prematurely, score NA)",
         "failure_modes": [
             "Did not inform next steps",
             "Did not ask for further help and provide assurance",
