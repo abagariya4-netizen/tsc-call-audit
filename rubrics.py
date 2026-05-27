@@ -3,7 +3,7 @@ The 8 scoring rubrics for TSC call audits.
 One rubric per lead source. Each human rubric is worth 100 points and uses identical parameters.
 """
 
-RUBRIC_VERSION = "v3"
+RUBRIC_VERSION = "v4"
 
 # Standard unified parameters used for all 7 human agent rubrics
 HUMAN_PARAMETERS = [
@@ -46,7 +46,7 @@ HUMAN_PARAMETERS = [
         "key": "advisor_behaviour",
         "name": "Advisor Behaviour",
         "max_points": 5,
-        "fatal": True,
+        "fatal": False,
         "check": "Did agent maintain professional polite non-rude non-abrupt behaviour throughout the entire call?",
         "failure_modes": [
             "Rude and abrupt behaviour observed"
@@ -66,7 +66,7 @@ HUMAN_PARAMETERS = [
         "key": "ownership_resolution",
         "name": "Ownership & Resolution",
         "max_points": 10,
-        "fatal": True,
+        "fatal": False,
         "check": "Did agent take full ownership, provide correct and complete information, and manage the call properly end to end?",
         "failure_modes": [
             "Did not note the conversation or missing information",
@@ -74,7 +74,8 @@ HUMAN_PARAMETERS = [
             "Did not tag the call as per the query",
             "Provided wrong pricing, wrong offer details, or wrong product specification"
         ]
-    },
+    }
+,
     {
         "key": "hold_mute",
         "name": "Hold & Mute",

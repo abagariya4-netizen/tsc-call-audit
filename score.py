@@ -75,6 +75,7 @@ CRITICAL AUDITOR INSTRUCTIONS:
 - When evidence is ambiguous default to No
 - For complaint score NA unless customer explicitly raised a complaint during the call
 - For ownership_resolution score based only on whether the information spoken in the call was accurate and complete
+- For parameters that were not discussed or reached during the call (e.g., if the call ended early, the customer hung up abruptly, or the conversation did not progress to a specific stage), score them as NA. This ensures the agent is only graded on the portion of the call that actually transpired, giving partial marks up to the point of discussion and scaling the score proportionally.
 - Be strict — a score of 100 should be genuinely rare and only awarded when every single parameter was clearly and fully completed by the agent
 
 Here is the rubric for this call:
