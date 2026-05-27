@@ -16,7 +16,7 @@ MODEL_FALLBACK_LADDER = [
     "gemini-3-flash-preview",
 ]
 
-# Objective-only deduction Red Flags
+# Objective-only deduction Red Flags (kept for backward compatibility, not used in math)
 RED_FLAGS = [
     {
         "key": "rude_to_customer",
@@ -34,9 +34,9 @@ RED_FLAGS = [
 
 def score_transcript(transcript_text, rubric_dict, gemini_client, english_transcript=None):
     """
-    Unified scoring function for all 7 rubrics using temperature=0 and JSON response mode.
+    Unified scoring function for all rubrics using temperature=0 and JSON response mode.
     Sets Gemini temperature=0, top_p=0.0, top_k=1, seed=42, and response_mime_type=application/json.
-    Integrates persistent score caching and deduction-only red flags.
+    Integrates persistent score caching.
     """
     # 1. Cache look-up
     rubric_key = None
@@ -54,7 +54,7 @@ def score_transcript(transcript_text, rubric_dict, gemini_client, english_transc
     if cached_score:
         return cached_score["result"], cached_score["model_used"]
 
-    # 2. Build prompt parameters and red flags descriptions
+    # 2. Build prompt parameters and instructions
     param_bullets = []
     for p in rubric_dict["parameters"]:
         param_bullets.append(
@@ -64,25 +64,18 @@ def score_transcript(transcript_text, rubric_dict, gemini_client, english_transc
         )
     param_str = "\n".join(param_bullets)
     
-    rf_bullets = []
-    for rf in RED_FLAGS:
-        rf_bullets.append(
-            f"- {rf['key']} ({rf['deduction']} pts penalty):\n"
-            f"  Check: {rf['check']}"
-        )
-    rf_str = "\n".join(rf_bullets)
-    
     prompt = f"""You are a strict, objective call-quality auditor for The Sleep Company (TSC), a premium mattress brand in India.
 You audit calls to evaluate agents or bots. The calls are typically in Hindi, English, or other Indian languages (like Hinglish) — score based on meaning, not language.
 
 CRITICAL AUDITOR INSTRUCTIONS:
-1. Score "Yes", "No", or "NA" ONLY for scoring parameters. Do not use any other values.
-2. Be extremely strict and objective: a 100/100 should be rare and represent an absolutely flawless call.
-3. Default to "No" when the evidence for a parameter is ambiguous, weak, or incomplete. Do NOT give the benefit of the doubt.
-4. For the "complaint" parameter: Score "NA" unless the customer explicitly raised a complaint or expressed frustration. Do not score "Yes" or "No" unless an active complaint or grievance was present in the call.
-5. For the "ownership_resolution" parameter: Evaluate ONLY the verbal accuracy and completeness of the information provided by the agent during the call itself. Do NOT assume any post-call CRM action was completed or not completed, as that cannot be verified from the audio transcript alone.
-6. Translate naturally and accurately: preserve names, prices, store addresses, pincodes, and product names verbatim in the English translation.
-7. For red flags, answer true ONLY if there is explicit evidence in the transcript. Otherwise, default to false.
+- Score each parameter Yes No or NA only
+- Yes means agent clearly and completely performed this behavior
+- No means agent clearly failed or missed this behavior
+- NA means this parameter genuinely did not apply to this call
+- When evidence is ambiguous default to No
+- For complaint score NA unless customer explicitly raised a complaint during the call
+- For ownership_resolution score based only on whether the information spoken in the call was accurate and complete
+- Be strict — a score of 100 should be genuinely rare and only awarded when every single parameter was clearly and fully completed by the agent
 
 Here is the rubric for this call:
 LEAD SOURCE: {rubric_dict['name']}
@@ -91,24 +84,12 @@ CUSTOMER INTENT: {rubric_dict['description']}
 SCORING PARAMETERS:
 {param_str}
 
-RED FLAGS (answer true/false if triggered):
-{rf_str}
-
 ---
 CALL TRANSCRIPT (single-speaker raw output; infer speaker turns):
 {transcript_text}
 ---
 
 Generate a naturally translated English version of the transcript, formatted as a dialogue where each turn starts with "Agent:" or "Customer:" on a new line with blank lines between speaker turns. "Agent" is the TSC sales representative or bot; "Customer" is the lead. Translate naturally (not word-for-word); preserve names, prices, store addresses, pincodes, and product names verbatim. If the call is already in English, clean it up (remove filler) and format as dialogue.
-
-SCORING RULES (CRITICAL FOR DETERMINISM):
-1. For each parameter, evaluate the check criteria strictly.
-2. Answer "Yes" ONLY if there is clear, explicit evidence in the transcript that the agent met the criteria.
-3. Answer "No" if there is evidence of failure or if the required action was missing.
-4. Answer "NA" ONLY if the parameter is genuinely not applicable to the call.
-5. Base your verdict strictly on what is explicitly present in the transcript. Do not infer, assume, or give the benefit of the doubt.
-6. When evidence is ambiguous or missing, default to "No" (deterministic default).
-7. For red flags, answer true ONLY if there is explicit evidence in the transcript. Otherwise, default to false.
 
 Force a response with a JSON object of this exact shape:
 {{
@@ -118,14 +99,6 @@ Force a response with a JSON object of this exact shape:
   }},
   "reasons": {{
     {", ".join(f'"{p["key"]}": "1-2 sentence reason citing what was observed"' for p in rubric_dict["parameters"])}
-  }},
-  "red_flags": {{
-    "rude_to_customer": true | false,
-    "wrong_info": true | false
-  }},
-  "red_flag_reasons": {{
-    "rude_to_customer": "evidence or empty string",
-    "wrong_info": "evidence or empty string"
   }},
   "summary": "2-3 sentence overall call summary",
   "coaching": "2-3 specific coaching points for the agent"
@@ -158,8 +131,6 @@ Force a response with a JSON object of this exact shape:
                 # Schema validation
                 if "scores" not in result or "reasons" not in result or "summary" not in result or "coaching" not in result:
                     raise ValueError("JSON response missing top-level keys")
-                if "red_flags" not in result or "red_flag_reasons" not in result:
-                    raise ValueError("JSON response missing red flag keys")
                 
                 # Check if all keys exist and have valid values
                 for p in rubric_dict["parameters"]:
@@ -169,64 +140,45 @@ Force a response with a JSON object of this exact shape:
                     if result["scores"][k] not in ("Yes", "No", "NA"):
                         raise ValueError(f"Invalid verdict for key {k}: {result['scores'][k]}")
                         
-                # Check and normalize red flags
-                for rf in RED_FLAGS:
-                    rk = rf["key"]
-                    if rk not in result["red_flags"] or rk not in result["red_flag_reasons"]:
-                        raise ValueError(f"Missing red flag key: {rk}")
-                    if not isinstance(result["red_flags"][rk], bool):
-                        val_str = str(result["red_flags"][rk]).strip().lower()
-                        result["red_flags"][rk] = val_str in ("true", "1", "yes")
-                
                 scores = result["scores"]
                 reasons = result["reasons"]
-                red_flags_data = result["red_flags"]
-                red_flag_reasons = result["red_flag_reasons"]
                 summary = result["summary"]
                 coaching = result["coaching"]
                 english_transcript = result.get("english_transcript", "")
                 
-                # Compute base score in Python (NOT in Gemini)
-                raw_total = sum(p["max_points"] for p in rubric_dict["parameters"]
-                               if scores.get(p["key"]) == "Yes")
-                applicable_max = sum(p["max_points"] for p in rubric_dict["parameters"]
-                                    if scores.get(p["key"]) != "NA")
-                
-                base_score = round((raw_total / applicable_max) * 100) if applicable_max > 0 else 0
-                
-                # Compute red flag deduction
-                red_flags_triggered = [rf["key"] for rf in RED_FLAGS if red_flags_data.get(rf["key"]) is True]
-                red_flag_deduction = sum(rf["deduction"] for rf in RED_FLAGS if red_flags_data.get(rf["key"]) is True)
-                
-                # Check for fatal failures
-                fatal_failed = False
+                # Compute points & final score based on new scoring math!
+                # Step 1 & 2: Check the 2 FATAL parameters only (advisor_behaviour and ownership_resolution)
                 fatal_failed_params = []
-                for p in rubric_dict["parameters"]:
-                    if p.get("fatal"):
-                        verdict = str(scores.get(p["key"], "NA")).strip()
-                        if verdict.lower() == "no":
-                            fatal_failed = True
-                            fatal_failed_params.append(p["name"])
+                for fatal_k in ["advisor_behaviour", "ownership_resolution"]:
+                    if fatal_k in scores and scores[fatal_k] == "No":
+                        fatal_failed_params.append(fatal_k)
+                        
+                fatal_failed = len(fatal_failed_params) > 0
+                
+                yes_points = sum(p["max_points"] for p in rubric_dict["parameters"] if scores.get(p["key"]) == "Yes")
+                applicable_points = sum(p["max_points"] for p in rubric_dict["parameters"] if scores.get(p["key"]) != "NA")
                 
                 if fatal_failed:
                     final_score = 0
+                    pass_fail = "Fail"
                 else:
-                    final_score = max(0, base_score + red_flag_deduction)
+                    final_score = round((yes_points / applicable_points) * 100) if applicable_points > 0 else 0
+                    pass_fail = "Pass" if final_score >= 85 else "Fail"
                 
-                lsq_caveat = "Note: CRM tagging, LeadSquared logging, and actual hold/mute time cannot be fully verified from call audio alone. These parameters require secondary verification in LeadSquared CRM."
+                lsq_caveat = "Note: LSQ documentation and CRM tagging cannot be verified from transcript alone. Ownership score reflects verbal accuracy in the call only."
                 
                 success_result = {
-                    "base_score": base_score,
                     "total_score": final_score,
-                    "raw_score": raw_total,
-                    "applicable_max": applicable_max,
-                    "red_flags_triggered": red_flags_triggered,
-                    "red_flag_deduction": red_flag_deduction,
-                    "red_flags": red_flags_data,
-                    "red_flag_reasons": red_flag_reasons,
+                    "yes_points": yes_points,
+                    "applicable_points": applicable_points,
                     "fatal_failed": fatal_failed,
                     "fatal_failed_params": fatal_failed_params,
+                    "pass_fail": pass_fail,
+                    "summary": summary,
+                    "coaching": coaching,
+                    "coaching_notes": coaching,  # backward compatibility
                     "lsq_caveat": lsq_caveat,
+                    "english_transcript": english_transcript,
                     "parameter_scores": {
                         p["key"]: {
                             "name": p["name"],
@@ -236,11 +188,14 @@ Force a response with a JSON object of this exact shape:
                             "reason": reasons.get(p["key"], "")
                         } for p in rubric_dict["parameters"]
                     },
-                    "summary": summary,
-                    "coaching_notes": coaching,
-                    "coaching": coaching,
-                    "english_transcript": english_transcript,
-                    "pass_fail": "Pass" if final_score >= 85 else "Fail"
+                    # backward compatibility keys:
+                    "base_score": final_score,
+                    "raw_score": yes_points,
+                    "applicable_max": applicable_points,
+                    "red_flags_triggered": [],
+                    "red_flag_deduction": 0,
+                    "red_flags": {},
+                    "red_flag_reasons": {}
                 }
                 
                 # Save to cache
@@ -255,26 +210,29 @@ Force a response with a JSON object of this exact shape:
                 continue
                 
     # All retries failed
+    lsq_caveat = "Note: LSQ documentation and CRM tagging cannot be verified from transcript alone. Ownership score reflects verbal accuracy in the call only."
     error_result = {
         "scoring_error": True,
         "raw_response": last_raw_response,
-        "base_score": 0,
         "total_score": 0,
-        "pass_fail": "Fail",
-        "raw_score": 0,
-        "applicable_max": 100,
+        "yes_points": 0,
+        "applicable_points": 100,
         "fatal_failed": False,
         "fatal_failed_params": [],
-        "red_flags_triggered": [],
-        "red_flag_deduction": 0,
-        "red_flags": {rf["key"]: False for rf in RED_FLAGS},
-        "red_flag_reasons": {rf["key"]: "" for rf in RED_FLAGS},
-        "lsq_caveat": "Note: CRM tagging, LeadSquared logging, and actual hold/mute time cannot be fully verified from call audio alone. These parameters require secondary verification in LeadSquared CRM.",
+        "pass_fail": "Fail",
+        "lsq_caveat": lsq_caveat,
         "parameter_scores": {},
         "summary": f"SCORING ERROR: JSON validation failed. Raw response: {last_raw_response[:200]}",
-        "coaching_notes": f"Validation failed after 3 attempts on all models. Last error: {last_error}",
         "coaching": f"Validation failed after 3 attempts on all models. Last error: {last_error}",
-        "english_transcript": f"Error scoring call. Raw model output:\n{last_raw_response}"
+        "coaching_notes": f"Validation failed after 3 attempts on all models. Last error: {last_error}",
+        "english_transcript": f"Error scoring call. Raw model output:\n{last_raw_response}",
+        "base_score": 0,
+        "raw_score": 0,
+        "applicable_max": 100,
+        "red_flags_triggered": [],
+        "red_flag_deduction": 0,
+        "red_flags": {},
+        "red_flag_reasons": {}
     }
     return error_result, "gemini-3.1-flash-lite"
 

@@ -163,89 +163,60 @@ def transcribe_audio(file_bytes, filename):
 def classify_by_lead_source_column(lead_source_string):
     """
     Instantly maps a LeadSquared CRM value to a built-in rubric key.
-    Normalizes string by stripping, lowercasing, and removing dashes/underscores.
-    Returns the mapped rubric key if matched, else None.
+    Compares case-insensitive, stripping all whitespace and special characters before comparing.
     """
     if not lead_source_string or not isinstance(lead_source_string, str):
         return None
         
-    val = lead_source_string.strip().lower()
-    # Normalize hyphens, en-dashes, and underscores to spaces
-    val_clean = val.replace("-", " ").replace("_", " ").replace("–", " ")
-    val_clean = " ".join(val_clean.split()) # clean multiple spaces
+    import re
+    val_clean = re.sub(r'[^a-zA-Z0-9]', '', lead_source_string).lower()
     
-    # Direct mapping dictionary covering 25+ LeadSquared CRM values
     mapping = {
-        "find store ctwa": "find_a_store",
-        "find store": "find_a_store",
-        "find a store": "find_a_store",
-        "store locator": "find_a_store",
-        "locate store": "find_a_store",
-        "store visit": "find_a_store",
-        "visit store": "find_a_store",
-        "ctwa store": "find_a_store",
+        # find_a_store
+        "findstorectwa": "find_a_store",
+        "findastorestorefound": "find_a_store",
+        "findastorenostorefound": "find_a_store",
+        "findastorenoresponse": "find_a_store",
+        "orthogridmattressctwa": "find_a_store",
+        "pillowexchangeoffer": "find_a_store",
         
-        "arrange call back": "arrange_callback",
-        "arrange callback": "arrange_callback",
-        "request callback": "arrange_callback",
-        "request call back": "arrange_callback",
-        "callback request": "arrange_callback",
-        "callback": "arrange_callback",
-        "call back": "arrange_callback",
-        "arrange callback ctwa": "arrange_callback",
-        "book callback": "arrange_callback",
+        # arrange_callback
+        "arrangecallback": "arrange_callback",
+        "arrangecallbackrepeatvisit": "arrange_callback",
+        "warmupleads": "arrange_callback",
+        "quotationcreated": "arrange_callback",
+        "migrationactivitydigitalleads": "arrange_callback",
+        "qualityatrafficleads": "arrange_callback",
+        "elitesofalead": "arrange_callback",
+        "mattressrecommenderorganic": "arrange_callback",
+        "chairrecommenderwhatsapp": "arrange_callback",
+        "chatbot": "arrange_callback",
         
-        "inbound phone call": "inbound",
-        "inbound": "inbound",
-        "inbound call": "inbound",
-        "incoming": "inbound",
-        "incoming call": "inbound",
-        "direct inbound": "inbound",
-        "direct call": "inbound",
+        # inbound
+        "inboundphonecall": "inbound",
+        "poswalkin": "inbound",
+        "walkin": "inbound",
+        "chatsales": "inbound",
+        "serviceticket": "inbound",
+        "nonstandardprompt": "inbound",
+        "popinvideocall": "inbound",
+        "posorderconfirmationalternatenumber": "inbound",
+        "callsales": "inbound",
+        "orderconfirmation": "inbound",
         
-        "shopflo abandoned cart": "shopflo_abandoned_cart",
-        "shopflo": "shopflo_abandoned_cart",
-        "abandoned cart": "shopflo_abandoned_cart",
-        "cart abandonment": "shopflo_abandoned_cart",
-        "cart abandoned": "shopflo_abandoned_cart",
-        "shopflo checkout": "shopflo_abandoned_cart",
-        "shopflo cart": "shopflo_abandoned_cart",
+        # shopflo_abandoned_cart
+        "shopfloabandonedcart": "shopflo_abandoned_cart",
+        "shopifyabandonedcart": "shopflo_abandoned_cart",
         
-        "next day delivery": "next_day_delivery",
-        "next-day delivery": "next_day_delivery",
-        "ndd": "next_day_delivery",
-        "ndd eligibility": "next_day_delivery",
-        "next day shipping": "next_day_delivery",
+        # next_day_delivery
+        "nextdaydelivery": "next_day_delivery",
         
-        "no cost emi": "no_cost_emi",
-        "no-cost emi": "no_cost_emi",
-        "emi": "no_cost_emi",
-        "no cost emi options": "no_cost_emi",
-        "emi options": "no_cost_emi",
-        "zero interest emi": "no_cost_emi",
-        
-        "sales team": "sales_team",
-        "sales team audit": "sales_team",
-        "sales_team": "sales_team",
-        "sales team baseline": "sales_team",
-        "general sales": "sales_team"
+        # no_cost_emi
+        "nocostemi": "no_cost_emi",
+        "emioffer": "no_cost_emi"
     }
     
-    # Try exact match on clean value
-    if val_clean in mapping:
-        return mapping[val_clean]
-        
-    # Try exact match on raw clean value with dashes/underscores intact
-    raw_clean = val.replace("–", "-")
-    if raw_clean in mapping:
-        return mapping[raw_clean]
-        
-    # Fallback to substring matching
-    for k, v in mapping.items():
-        if k in val_clean:
-            return v
-            
-    return None
+    return mapping.get(val_clean)
 
 def auto_classify_and_score(transcript_text):
     """Classify lead source then score."""
@@ -536,76 +507,62 @@ def render_call_card(row, transcript_text=None, english_transcript=None, paramet
     )
     
     with st.expander(title):
-        # Premium Score Metrics
-        col_m1, col_m2 = st.columns(2)
-        with col_m1:
-            st.metric(label="Audit Score", value=f"{score} / 100")
-        with col_m2:
-            status_emoji = "🟢" if pass_fail == "Pass" else "🔴"
-            st.metric(label="Verdict Status", value=f"{status_emoji} {pass_fail.upper()}")
-            
-        # Display Red Flags alert if any were triggered
-        rf_trig = row.get("red_flags_triggered", "")
-        if isinstance(rf_trig, list):
-            red_flags_triggered = rf_trig
-        elif isinstance(rf_trig, str) and rf_trig.strip():
-            if rf_trig.startswith("["):
-                try:
-                    import ast
-                    red_flags_triggered = ast.literal_eval(rf_trig)
-                except Exception:
-                    red_flags_triggered = [x.strip() for x in rf_trig.replace("[","").replace("]","").replace("'","").replace('"',"").split(",") if x.strip()]
+        # Green PASS or red FAIL badge prominently at the top
+        col_badge, col_score = st.columns([1, 1])
+        with col_badge:
+            if pass_fail == "Pass":
+                st.success("🟢 **PASS**")
             else:
-                red_flags_triggered = [x.strip() for x in rf_trig.split(",") if x.strip()]
-        else:
-            red_flags_triggered = []
-            
-        red_flag_deduction = row.get("red_flag_deduction", 0)
-        try:
-            red_flag_deduction = int(red_flag_deduction)
-        except Exception:
-            red_flag_deduction = 0
-            
-        if red_flags_triggered and red_flag_deduction != 0:
-            st.error(f"⚠️ **Red Flag(s) Triggered:** {', '.join(red_flags_triggered)} ({red_flag_deduction} pts deducted)")
+                st.error("🔴 **FAIL**")
+        with col_score:
+            st.metric(label="Total Score", value=f"{score} / 100")
             
         # Fatal Failure Banner
         is_fatal_failed = str(row.get("fatal_failed", "False")).strip().lower() == "true" or row.get("fatal_failed") is True
+        rubric_key = row.get("lead_source")
+        
         if is_fatal_failed:
             fatal_params = row.get("fatal_failed_params", "")
             if not fatal_params:
                 fatal_params = "Fatal Parameter Failed"
-            st.error(f"⚠️ FATAL FAILURE — This call failed due to fatal parameter failure(s): **{fatal_params}**")
+            
+            failed_reasons = []
+            if parameter_scores:
+                for k, p in parameter_scores.items():
+                    if (p.get("fatal") or is_param_fatal(rubric_key, k)) and p["verdict"] == "No":
+                        failed_reasons.append(f"• **{p['name']}**: {p['reason']}")
+            
+            reason_str = "\n".join(failed_reasons)
+            if reason_str:
+                st.error(f"⚠️ **FATAL FAILURE** — This call failed due to fatal parameter failure(s): **{fatal_params}**\n\n{reason_str}")
+            else:
+                st.error(f"⚠️ **FATAL FAILURE** — This call failed due to fatal parameter failure(s): **{fatal_params}**")
             
         st.markdown("### Summary")
         st.write(row["summary"])
-        st.markdown("### Coaching Points")
+        
+        st.markdown("### Coaching")
         coaching_text = row.get("coaching", row.get("coaching_notes", ""))
         st.write(coaching_text)
         
         st.markdown("### Parameter Scores")
         table_rows = []
-        rubric_key = row.get("lead_source")
         
         if parameter_scores:
             for key, p in parameter_scores.items():
                 is_fatal = p.get("fatal", False) or is_param_fatal(rubric_key, key)
-                name_str = f"⚠️ {p['name']} (Fatal)" if is_fatal else p["name"]
+                name_str = f"⚠️ {p['name']}" if is_fatal else p["name"]
                 
                 verdict = p["verdict"]
                 points_earned = p["points_earned"]
                 points_max = p["points_max"]
                 
-                if verdict == "NA":
-                    points_str = "NA"
-                else:
-                    points_str = f"{points_earned} / {points_max}"
-                    
                 table_rows.append({
-                    "Parameter": name_str,
-                    "Verdict": verdict,
-                    "Points": points_str,
-                    "Reason / Observation": p["reason"]
+                    "Parameter Name": name_str,
+                    "Verdict (Yes/No/NA)": verdict,
+                    "Points Earned": "NA" if verdict == "NA" else points_earned,
+                    "Max Points": points_max,
+                    "Reason from transcript": p["reason"]
                 })
         else:
             all_params = get_all_parameter_keys()
@@ -623,26 +580,20 @@ def render_call_card(row, transcript_text=None, english_transcript=None, paramet
                                     points_max = p["max_points"]
                                     break
                                     
-                        name_str = f"⚠️ {display_name} (Fatal)" if is_fatal else display_name
+                        name_str = f"⚠️ {display_name}" if is_fatal else display_name
                         verdict = str(val).strip()
+                        points_earned = points_max if verdict == "Yes" else 0
                         
-                        if verdict == "NA":
-                            points_str = "NA"
-                        elif verdict == "Yes":
-                            points_str = f"{points_max} / {points_max}"
-                        else:
-                            points_str = f"0 / {points_max}"
-                            
                         table_rows.append({
-                            "Parameter": name_str,
-                            "Verdict": verdict,
-                            "Points": points_str,
-                            "Reason / Observation": "N/A"
+                            "Parameter Name": name_str,
+                            "Verdict (Yes/No/NA)": verdict,
+                            "Points Earned": "NA" if verdict == "NA" else points_earned,
+                            "Max Points": points_max,
+                            "Reason from transcript": "N/A"
                         })
                         
         if table_rows:
             st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
-            st.caption("⚠️ **CRM Verification Note:** CRM tagging, LeadSquared logging, and actual hold/mute times cannot be verified from call audio alone. These require secondary verification in LeadSquared CRM.")
         else:
             st.info("No parameters found for this rubric.")
 
@@ -655,6 +606,8 @@ def render_call_card(row, transcript_text=None, english_transcript=None, paramet
             with st.expander("View original transcript (untranslated)"):
                 st.text(transcript_text)
 
+        # LSQ caveat note in small grey text at the bottom
+        st.caption("Note: LSQ documentation and CRM tagging cannot be verified from transcript alone. Ownership score reflects verbal accuracy in the call only.")
         st.caption(
             f"Language detected: {row.get('detected_language', 'unknown')}"
             f"  •  Scored using: {row.get('model_used', 'unknown')}"
@@ -779,11 +732,10 @@ if csv_mode:
             
         # Lead source detection
         for col in csv_df.columns:
-            if "lead source" in col.lower() or "lead_source" in col.lower():
-                valid_count = sum(1 for val in csv_df[col].dropna() if str(val).strip() in RUBRICS or classify_by_lead_source_column(str(val)) is not None)
-                if valid_count > 0:
-                    detected_ls_col = col
-                    break
+            col_cleaned = col.lower().replace("_", " ").replace("-", " ")
+            if "lead source" in col_cleaned:
+                detected_ls_col = col
+                break
         if detected_ls_col:
             st.success(f"🏷️ Lead source column detected: `{detected_ls_col}`")
         else:
@@ -1016,8 +968,8 @@ if call_type_choice == "🧑 Human agent":
         tcol1, tcol2, tcol3, tcol4, tcol5 = st.columns([0.5, 3.5, 2.5, 2.5, 2.0])
         tcol1.markdown("**#**")
         tcol2.markdown("**Filename / URL**")
-        tcol3.markdown("**CSV Lead Source**")
-        tcol4.markdown("**Detected Rubric**")
+        tcol3.markdown("**CRM Lead Source**")
+        tcol4.markdown("**Mapped Rubric**")
         tcol5.markdown("**Override**")
         
         override_options = ["Use auto-detected"] + [k for k in RUBRICS if k != "ai_voice_bot"]
@@ -1036,8 +988,6 @@ if call_type_choice == "🧑 Human agent":
                     csv_ls_val = str(val).strip()
                     
             auto_val = st.session_state["preview_jobs"].get(i, "pending...")
-            if auto_val in RUBRICS:
-                auto_val = RUBRICS[auto_val]["name"]
                 
             col1.write(f"{i+1}")
             col2.write(display_url)
