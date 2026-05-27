@@ -3,7 +3,7 @@ The 8 scoring rubrics for TSC call audits.
 One rubric per lead source. Each human rubric is worth 100 points and uses identical parameters.
 """
 
-RUBRIC_VERSION = "v6"
+RUBRIC_VERSION = "v7"
 
 # Standard unified parameters used for all 7 human agent rubrics (fatal parameter completely removed)
 HUMAN_PARAMETERS = [
@@ -94,7 +94,7 @@ HUMAN_PARAMETERS = [
     {
         "key": "closing",
         "name": "Closing",
-        "max_points": 10,
+        "max_points": 15,
         "check": "Did agent inform next steps, ask if customer needed further help, provide brand closing (Sleep Well with The Sleep Company), and create urgency where appropriate? (If no evidence of closing or call cut prematurely, score NA)",
         "failure_modes": [
             "Did not inform next steps",

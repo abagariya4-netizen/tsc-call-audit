@@ -501,10 +501,10 @@ def render_call_card(row, transcript_text=None, english_transcript=None, paramet
                 
             table_rows.append({
                 "Parameter Name": name_str,
-                "Verdict": verdict,
-                "Points Earned": "NA" if verdict == "NA" else points_earned,
-                "Max Points": points_max,
-                "Reason from transcript": p["reason"]
+                "Verdict": str(verdict),
+                "Points Earned": "NA" if verdict == "NA" else str(points_earned),
+                "Max Points": str(points_max),
+                "Reason from transcript": str(p["reason"])
             })
     else:
         all_params = get_all_parameter_keys()
@@ -541,10 +541,10 @@ def render_call_card(row, transcript_text=None, english_transcript=None, paramet
                         total_applicable += points_max
                         
                     table_rows.append({
-                        "Parameter Name": name_str,
-                        "Verdict": verdict,
-                        "Points Earned": "NA" if verdict == "NA" else points_earned,
-                        "Max Points": points_max,
+                        "Parameter Name": str(name_str),
+                        "Verdict": str(verdict),
+                        "Points Earned": "NA" if verdict == "NA" else str(points_earned),
+                        "Max Points": str(points_max),
                         "Reason from transcript": "N/A"
                     })
     
