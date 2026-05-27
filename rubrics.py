@@ -19,7 +19,7 @@ COMMON_PARAMETERS = [
         "key": "advisor_behaviour",
         "name": "Advisor Behaviour",
         "max_points": 5,
-        "fatal": False,
+        "fatal": True,
         "check": "Did agent maintain professional, polite, non-abrupt behaviour?",
         "failure_modes": ["Rude and abrupt behaviour"]
     },
@@ -35,7 +35,7 @@ COMMON_PARAMETERS = [
         "key": "ownership_resolution",
         "name": "Ownership & Resolution",
         "max_points": 10,
-        "fatal": False,
+        "fatal": True,
         "check": "Did agent take ownership — provide correct/complete info, note conversation properly, tag the call per query?",
         "failure_modes": ["Did not note conversation", "Incorrect/incomplete info", "Did not tag the call"]
     },
@@ -240,6 +240,37 @@ RUBRICS = {
                 "fatal": False,
                 "check": "Did agent mention bank-specific offers (HDFC, ICICI, etc.)?",
                 "failure_modes": ["Did not mention bank offers"]
+            }
+        ]
+    },
+
+    "sales_team": {
+        "name": "Sales Team Audit Baseline",
+        "description": "Baseline rubric used for standard sales team evaluation. Focuses on deep customer qualification, SmartGRID technology pitch, and professional closing.",
+        "parameters": COMMON_PARAMETERS + [
+            {
+                "key": "understanding_customer_needs",
+                "name": "Understanding Customer Needs",
+                "max_points": 20,
+                "fatal": False,
+                "check": "Did agent deeply qualify customer sleep issues, posture, bed size, and requirements?",
+                "failure_modes": ["Did not qualify sleep needs/posture"]
+            },
+            {
+                "key": "sales_pitch",
+                "name": "Sales Pitch",
+                "max_points": 20,
+                "fatal": False,
+                "check": "Did agent explain SmartGRID technology, comfort, and state premium benefits?",
+                "failure_modes": ["Weak or missing product pitch"]
+            },
+            {
+                "key": "closing",
+                "name": "Closing",
+                "max_points": 15,
+                "fatal": False,
+                "check": "Did agent secure the booking or process payment with clear next steps?",
+                "failure_modes": ["No clear call-to-action or closing attempt"]
             }
         ]
     },

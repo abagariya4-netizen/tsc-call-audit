@@ -58,7 +58,7 @@ def load_and_convert_custom_rubrics():
 
 CUSTOM_RUBRICS = load_and_convert_custom_rubrics()
 # Clean up deleted rubrics from the cached module dictionary
-BUILT_IN_KEYS = {"find_a_store", "arrange_callback", "inbound", "shopflo_abandoned_cart", "next_day_delivery", "no_cost_emi", "ai_voice_bot"}
+BUILT_IN_KEYS = {"find_a_store", "arrange_callback", "inbound", "shopflo_abandoned_cart", "next_day_delivery", "no_cost_emi", "sales_team", "ai_voice_bot"}
 for k in list(RUBRICS.keys()):
     if k not in BUILT_IN_KEYS and k not in CUSTOM_RUBRICS:
         del RUBRICS[k]
@@ -159,6 +159,93 @@ def transcribe_audio(file_bytes, filename):
     })
     return transcript.text, transcript.language, english_translation
 
+
+def classify_by_lead_source_column(lead_source_string):
+    """
+    Instantly maps a LeadSquared CRM value to a built-in rubric key.
+    Normalizes string by stripping, lowercasing, and removing dashes/underscores.
+    Returns the mapped rubric key if matched, else None.
+    """
+    if not lead_source_string or not isinstance(lead_source_string, str):
+        return None
+        
+    val = lead_source_string.strip().lower()
+    # Normalize hyphens, en-dashes, and underscores to spaces
+    val_clean = val.replace("-", " ").replace("_", " ").replace("–", " ")
+    val_clean = " ".join(val_clean.split()) # clean multiple spaces
+    
+    # Direct mapping dictionary covering 25+ LeadSquared CRM values
+    mapping = {
+        "find store ctwa": "find_a_store",
+        "find store": "find_a_store",
+        "find a store": "find_a_store",
+        "store locator": "find_a_store",
+        "locate store": "find_a_store",
+        "store visit": "find_a_store",
+        "visit store": "find_a_store",
+        "ctwa store": "find_a_store",
+        
+        "arrange call back": "arrange_callback",
+        "arrange callback": "arrange_callback",
+        "request callback": "arrange_callback",
+        "request call back": "arrange_callback",
+        "callback request": "arrange_callback",
+        "callback": "arrange_callback",
+        "call back": "arrange_callback",
+        "arrange callback ctwa": "arrange_callback",
+        "book callback": "arrange_callback",
+        
+        "inbound phone call": "inbound",
+        "inbound": "inbound",
+        "inbound call": "inbound",
+        "incoming": "inbound",
+        "incoming call": "inbound",
+        "direct inbound": "inbound",
+        "direct call": "inbound",
+        
+        "shopflo abandoned cart": "shopflo_abandoned_cart",
+        "shopflo": "shopflo_abandoned_cart",
+        "abandoned cart": "shopflo_abandoned_cart",
+        "cart abandonment": "shopflo_abandoned_cart",
+        "cart abandoned": "shopflo_abandoned_cart",
+        "shopflo checkout": "shopflo_abandoned_cart",
+        "shopflo cart": "shopflo_abandoned_cart",
+        
+        "next day delivery": "next_day_delivery",
+        "next-day delivery": "next_day_delivery",
+        "ndd": "next_day_delivery",
+        "ndd eligibility": "next_day_delivery",
+        "next day shipping": "next_day_delivery",
+        
+        "no cost emi": "no_cost_emi",
+        "no-cost emi": "no_cost_emi",
+        "emi": "no_cost_emi",
+        "no cost emi options": "no_cost_emi",
+        "emi options": "no_cost_emi",
+        "zero interest emi": "no_cost_emi",
+        
+        "sales team": "sales_team",
+        "sales team audit": "sales_team",
+        "sales_team": "sales_team",
+        "sales team baseline": "sales_team",
+        "general sales": "sales_team"
+    }
+    
+    # Try exact match on clean value
+    if val_clean in mapping:
+        return mapping[val_clean]
+        
+    # Try exact match on raw clean value with dashes/underscores intact
+    raw_clean = val.replace("–", "-")
+    if raw_clean in mapping:
+        return mapping[raw_clean]
+        
+    # Fallback to substring matching
+    for k, v in mapping.items():
+        if k in val_clean:
+            return v
+            
+    return None
 
 def auto_classify_and_score(transcript_text):
     """Classify lead source then score."""
@@ -421,30 +508,42 @@ def load_transcripts_from_disk(filename):
     return orig, en
 
 
+def is_param_fatal(rubric_key, param_key):
+    if rubric_key in RUBRICS:
+        for p in RUBRICS[rubric_key]["parameters"]:
+            if p["key"] == param_key:
+                return p.get("fatal", False)
+    return False
+
 def render_call_card(row, transcript_text=None, english_transcript=None, parameter_scores=None):
     score = int(row["total_score"])
     pass_fail = row.get("pass_fail", "")
+    if not pass_fail:
+        pass_fail = "Pass" if score >= 85 else "Fail"
     
-    if score >= 80:
+    if score >= 85:
         score_emoji = "🟢"
     elif score >= 50:
         score_emoji = "🟡"
     else:
         score_emoji = "🔴"
-    
-    badge_html = ""
-    if pass_fail == "Pass":
-        badge_html = "<span style='color: green; font-weight: bold;'>PASS</span>"
-    elif pass_fail == "Fail":
-        badge_html = "<span style='color: red; font-weight: bold;'>FAIL</span>"
-    
+        
     title = (
         f"{score_emoji}  **{row['filename']}**"
-        f"  —  Score: **{score} / 100** {badge_html}"
+        f"  —  Score: **{score} / 100** ({pass_fail})"
         f"  —  Agent: {row['agent_id']}"
-        f"  —  {row['lead_source']}"
+        f"  —  {RUBRICS.get(row['lead_source'], {}).get('name', row['lead_source'])}"
     )
+    
     with st.expander(title):
+        # Premium Score Metrics
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
+            st.metric(label="Audit Score", value=f"{score} / 100")
+        with col_m2:
+            status_emoji = "🟢" if pass_fail == "Pass" else "🔴"
+            st.metric(label="Verdict Status", value=f"{status_emoji} {pass_fail.upper()}")
+            
         # Display Red Flags alert if any were triggered
         rf_trig = row.get("red_flags_triggered", "")
         if isinstance(rf_trig, list):
@@ -469,7 +568,15 @@ def render_call_card(row, transcript_text=None, english_transcript=None, paramet
             
         if red_flags_triggered and red_flag_deduction != 0:
             st.error(f"⚠️ **Red Flag(s) Triggered:** {', '.join(red_flags_triggered)} ({red_flag_deduction} pts deducted)")
-
+            
+        # Fatal Failure Banner
+        is_fatal_failed = str(row.get("fatal_failed", "False")).strip().lower() == "true" or row.get("fatal_failed") is True
+        if is_fatal_failed:
+            fatal_params = row.get("fatal_failed_params", "")
+            if not fatal_params:
+                fatal_params = "Fatal Parameter Failed"
+            st.error(f"⚠️ FATAL FAILURE — This call failed due to fatal parameter failure(s): **{fatal_params}**")
+            
         st.markdown("### Summary")
         st.write(row["summary"])
         st.markdown("### Coaching Points")
@@ -477,28 +584,67 @@ def render_call_card(row, transcript_text=None, english_transcript=None, paramet
         st.write(coaching_text)
         
         st.markdown("### Parameter Scores")
+        table_rows = []
+        rubric_key = row.get("lead_source")
+        
         if parameter_scores:
             for key, p in parameter_scores.items():
-                st.markdown(
-                    f"- **{p['name']}** ({p['points_max']} pts max): "
-                    f"**{p['verdict']}** ({p['points_earned']}/{p['points_max']} pts) "
-                    f"— *{p['reason']}*"
-                )
+                is_fatal = p.get("fatal", False) or is_param_fatal(rubric_key, key)
+                name_str = f"⚠️ {p['name']} (Fatal)" if is_fatal else p["name"]
+                
+                verdict = p["verdict"]
+                points_earned = p["points_earned"]
+                points_max = p["points_max"]
+                
+                if verdict == "NA":
+                    points_str = "NA"
+                else:
+                    points_str = f"{points_earned} / {points_max}"
+                    
+                table_rows.append({
+                    "Parameter": name_str,
+                    "Verdict": verdict,
+                    "Points": points_str,
+                    "Reason / Observation": p["reason"]
+                })
         else:
             all_params = get_all_parameter_keys()
-            for col in row.index if hasattr(row, "index") else row.keys():
+            for col in (row.index if hasattr(row, "index") else row.keys()):
                 if col in all_params:
                     val = row[col]
                     if pd.notna(val) and str(val).strip():
                         display_name = col
-                        max_points = ""
+                        points_max = 0
+                        is_fatal = is_param_fatal(rubric_key, col)
                         for r in RUBRICS.values():
                             for p in r["parameters"]:
                                 if p["key"] == col:
                                     display_name = p["name"]
-                                    max_points = f" ({p['max_points']} pts)"
+                                    points_max = p["max_points"]
                                     break
-                        st.markdown(f"- **{display_name}**{max_points}: {val}")
+                                    
+                        name_str = f"⚠️ {display_name} (Fatal)" if is_fatal else display_name
+                        verdict = str(val).strip()
+                        
+                        if verdict == "NA":
+                            points_str = "NA"
+                        elif verdict == "Yes":
+                            points_str = f"{points_max} / {points_max}"
+                        else:
+                            points_str = f"0 / {points_max}"
+                            
+                        table_rows.append({
+                            "Parameter": name_str,
+                            "Verdict": verdict,
+                            "Points": points_str,
+                            "Reason / Observation": "N/A"
+                        })
+                        
+        if table_rows:
+            st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
+            st.caption("⚠️ **CRM Verification Note:** CRM tagging, LeadSquared logging, and actual hold/mute times cannot be verified from call audio alone. These require secondary verification in LeadSquared CRM.")
+        else:
+            st.info("No parameters found for this rubric.")
 
         if english_transcript and str(english_transcript).strip():
             st.markdown("### 📄 English Transcript")
@@ -633,8 +779,8 @@ if csv_mode:
             
         # Lead source detection
         for col in csv_df.columns:
-            if col.lower() in ("lead_source", "lead source"):
-                valid_count = sum(1 for val in csv_df[col].dropna() if str(val).strip() in RUBRICS)
+            if "lead source" in col.lower() or "lead_source" in col.lower():
+                valid_count = sum(1 for val in csv_df[col].dropna() if str(val).strip() in RUBRICS or classify_by_lead_source_column(str(val)) is not None)
                 if valid_count > 0:
                     detected_ls_col = col
                     break
@@ -823,6 +969,18 @@ if call_type_choice == "🧑 Human agent":
                     for i in range(N_prev):
                         if st.session_state["preview_jobs"].get(i) != "pending...":
                             continue
+                        
+                        # Try instant mapping from CSV Lead Source column first!
+                        instant_mapped = None
+                        if detected_ls_col:
+                            csv_ls_val = df.iloc[i].get(detected_ls_col)
+                            if pd.notna(csv_ls_val):
+                                instant_mapped = classify_by_lead_source_column(str(csv_ls_val))
+                                
+                        if instant_mapped:
+                            st.session_state["preview_jobs"][i] = instant_mapped
+                            continue
+                            
                         url = str(df.iloc[i][url_col])
                         def task(idx=i, u=url):
                             if ctx:
@@ -855,33 +1013,43 @@ if call_type_choice == "🧑 Human agent":
         pending_count = sum(1 for v in st.session_state["preview_jobs"].values() if v == "pending...")
         
         # Render the table headers
-        tcol1, tcol2, tcol3, tcol4 = st.columns([1, 4, 3, 3])
+        tcol1, tcol2, tcol3, tcol4, tcol5 = st.columns([0.5, 3.5, 2.5, 2.5, 2.0])
         tcol1.markdown("**#**")
         tcol2.markdown("**Filename / URL**")
-        tcol3.markdown("**Auto-detected**")
-        tcol4.markdown("**Override**")
+        tcol3.markdown("**CSV Lead Source**")
+        tcol4.markdown("**Detected Rubric**")
+        tcol5.markdown("**Override**")
         
         override_options = ["Use auto-detected"] + [k for k in RUBRICS if k != "ai_voice_bot"]
         
         render_limit = min(N_preview, 100)
         for i in range(render_limit):
-            col1, col2, col3, col4 = st.columns([1, 4, 3, 3])
+            col1, col2, col3, col4, col5 = st.columns([0.5, 3.5, 2.5, 2.5, 2.0])
             url = str(csv_df.iloc[i][detected_url_col])
             display_url = url if len(url) < 40 else url[:37] + "..."
+            
+            # CSV Lead Source value
+            csv_ls_val = "N/A"
+            if detected_ls_col:
+                val = csv_df.iloc[i].get(detected_ls_col)
+                if pd.notna(val) and str(val).strip():
+                    csv_ls_val = str(val).strip()
+                    
             auto_val = st.session_state["preview_jobs"].get(i, "pending...")
             if auto_val in RUBRICS:
                 auto_val = RUBRICS[auto_val]["name"]
                 
             col1.write(f"{i+1}")
             col2.write(display_url)
-            col3.write(auto_val)
+            col3.write(csv_ls_val)
+            col4.write(auto_val)
             
             def make_on_change(idx):
                 def cb():
                     st.session_state["preview_overrides"][idx] = st.session_state[f"ovr_key_{idx}"]
                 return cb
                 
-            col4.selectbox(
+            col5.selectbox(
                 "Override",
                 options=override_options,
                 format_func=lambda x: RUBRICS[x]["name"] if x in RUBRICS else x,
@@ -975,7 +1143,10 @@ if score_clicked:
                             val = None
                             if detected_ls_col and pd.notna(row_data.get(detected_ls_col)):
                                 val_str = str(row_data[detected_ls_col]).strip()
-                                if val_str in RUBRICS:
+                                val_mapped = classify_by_lead_source_column(val_str)
+                                if val_mapped:
+                                    val = val_mapped
+                                elif val_str in RUBRICS:
                                     val = val_str
                             effective_lead_source = val if val else AUTO_DETECT_KEY
                         else:

@@ -72,9 +72,17 @@ def score_transcript(transcript_text, rubric_dict, gemini_client, english_transc
         )
     rf_str = "\n".join(rf_bullets)
     
-    prompt = f"""You are a strict call-quality auditor for The Sleep Company (TSC),
-a premium mattress brand in India. You audit calls to evaluate agents or bots.
-The calls are typically in Hindi, English, or other Indian languages — score based on meaning, not language.
+    prompt = f"""You are a strict, objective call-quality auditor for The Sleep Company (TSC), a premium mattress brand in India.
+You audit calls to evaluate agents or bots. The calls are typically in Hindi, English, or other Indian languages (like Hinglish) — score based on meaning, not language.
+
+CRITICAL AUDITOR INSTRUCTIONS:
+1. Score "Yes", "No", or "NA" ONLY for scoring parameters. Do not use any other values.
+2. Be extremely strict and objective: a 100/100 should be rare and represent an absolutely flawless call.
+3. Default to "No" when the evidence for a parameter is ambiguous, weak, or incomplete. Do NOT give the benefit of the doubt.
+4. For the "complaint" parameter: Score "NA" unless the customer explicitly raised a complaint or expressed frustration. Do not score "Yes" or "No" unless an active complaint or grievance was present in the call.
+5. For the "ownership_resolution" parameter: Evaluate ONLY the verbal accuracy and completeness of the information provided by the agent during the call itself. Do NOT assume any post-call CRM action was completed or not completed, as that cannot be verified from the audio transcript alone.
+6. Translate naturally and accurately: preserve names, prices, store addresses, pincodes, and product names verbatim in the English translation.
+7. For red flags, answer true ONLY if there is explicit evidence in the transcript. Otherwise, default to false.
 
 Here is the rubric for this call:
 LEAD SOURCE: {rubric_dict['name']}
@@ -190,7 +198,21 @@ Force a response with a JSON object of this exact shape:
                 red_flags_triggered = [rf["key"] for rf in RED_FLAGS if red_flags_data.get(rf["key"]) is True]
                 red_flag_deduction = sum(rf["deduction"] for rf in RED_FLAGS if red_flags_data.get(rf["key"]) is True)
                 
-                final_score = max(0, base_score + red_flag_deduction)
+                # Check for fatal failures
+                fatal_failed = False
+                fatal_failed_params = []
+                for p in rubric_dict["parameters"]:
+                    if p.get("fatal"):
+                        if scores.get(p["key"]) == "No":
+                            fatal_failed = True
+                            fatal_failed_params.append(p["name"])
+                
+                if fatal_failed:
+                    final_score = 0
+                else:
+                    final_score = max(0, base_score + red_flag_deduction)
+                
+                lsq_caveat = "Note: CRM tagging, LeadSquared logging, and actual hold/mute time cannot be fully verified from call audio alone. These parameters require secondary verification in LeadSquared CRM."
                 
                 success_result = {
                     "base_score": base_score,
@@ -201,8 +223,9 @@ Force a response with a JSON object of this exact shape:
                     "red_flag_deduction": red_flag_deduction,
                     "red_flags": red_flags_data,
                     "red_flag_reasons": red_flag_reasons,
-                    "fatal_failed": False,
-                    "fatal_failed_params": [],
+                    "fatal_failed": fatal_failed,
+                    "fatal_failed_params": fatal_failed_params,
+                    "lsq_caveat": lsq_caveat,
                     "parameter_scores": {
                         p["key"]: {
                             "name": p["name"],
@@ -245,6 +268,7 @@ Force a response with a JSON object of this exact shape:
         "red_flag_deduction": 0,
         "red_flags": {rf["key"]: False for rf in RED_FLAGS},
         "red_flag_reasons": {rf["key"]: "" for rf in RED_FLAGS},
+        "lsq_caveat": "Note: CRM tagging, LeadSquared logging, and actual hold/mute time cannot be fully verified from call audio alone. These parameters require secondary verification in LeadSquared CRM.",
         "parameter_scores": {},
         "summary": f"SCORING ERROR: JSON validation failed. Raw response: {last_raw_response[:200]}",
         "coaching_notes": f"Validation failed after 3 attempts on all models. Last error: {last_error}",
