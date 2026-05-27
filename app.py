@@ -479,13 +479,6 @@ def load_transcripts_from_disk(filename):
     return orig, en
 
 
-def is_param_fatal(rubric_key, param_key):
-    if rubric_key in RUBRICS:
-        for p in RUBRICS[rubric_key]["parameters"]:
-            if p["key"] == param_key:
-                return p.get("fatal", False)
-    return False
-
 def render_call_card(row, transcript_text=None, english_transcript=None, parameter_scores=None):
     score = int(row["total_score"])
     pass_fail = row.get("pass_fail", "")
@@ -517,27 +510,6 @@ def render_call_card(row, transcript_text=None, english_transcript=None, paramet
         with col_score:
             st.metric(label="Total Score", value=f"{score} / 100")
             
-        # Fatal Failure Banner
-        is_fatal_failed = str(row.get("fatal_failed", "False")).strip().lower() == "true" or row.get("fatal_failed") is True
-        rubric_key = row.get("lead_source")
-        
-        if is_fatal_failed:
-            fatal_params = row.get("fatal_failed_params", "")
-            if not fatal_params:
-                fatal_params = "Fatal Parameter Failed"
-            
-            failed_reasons = []
-            if parameter_scores:
-                for k, p in parameter_scores.items():
-                    if (p.get("fatal") or is_param_fatal(rubric_key, k)) and p["verdict"] == "No":
-                        failed_reasons.append(f"• **{p['name']}**: {p['reason']}")
-            
-            reason_str = "\n".join(failed_reasons)
-            if reason_str:
-                st.error(f"⚠️ **FATAL FAILURE** — This call failed due to fatal parameter failure(s): **{fatal_params}**\n\n{reason_str}")
-            else:
-                st.error(f"⚠️ **FATAL FAILURE** — This call failed due to fatal parameter failure(s): **{fatal_params}**")
-            
         st.markdown("### Summary")
         st.write(row["summary"])
         
@@ -547,11 +519,11 @@ def render_call_card(row, transcript_text=None, english_transcript=None, paramet
         
         st.markdown("### Parameter Scores")
         table_rows = []
+        rubric_key = row.get("lead_source")
         
         if parameter_scores:
             for key, p in parameter_scores.items():
-                is_fatal = p.get("fatal", False) or is_param_fatal(rubric_key, key)
-                name_str = f"⚠️ {p['name']}" if is_fatal else p["name"]
+                name_str = p["name"]
                 
                 verdict = p["verdict"]
                 points_earned = p["points_earned"]
@@ -572,7 +544,6 @@ def render_call_card(row, transcript_text=None, english_transcript=None, paramet
                     if pd.notna(val) and str(val).strip():
                         display_name = col
                         points_max = 0
-                        is_fatal = is_param_fatal(rubric_key, col)
                         for r in RUBRICS.values():
                             for p in r["parameters"]:
                                 if p["key"] == col:
@@ -580,7 +551,7 @@ def render_call_card(row, transcript_text=None, english_transcript=None, paramet
                                     points_max = p["max_points"]
                                     break
                                     
-                        name_str = f"⚠️ {display_name}" if is_fatal else display_name
+                        name_str = display_name
                         verdict = str(val).strip()
                         points_earned = points_max if verdict == "Yes" else 0
                         

@@ -148,23 +148,14 @@ Force a response with a JSON object of this exact shape:
                 english_transcript = result.get("english_transcript", "")
                 
                 # Compute points & final score based on new scoring math!
-                # Step 1 & 2: Check the 2 FATAL parameters only (advisor_behaviour and ownership_resolution)
-                fatal_failed_params = []
-                for fatal_k in ["advisor_behaviour", "ownership_resolution"]:
-                    if fatal_k in scores and scores[fatal_k] == "No":
-                        fatal_failed_params.append(fatal_k)
-                        
-                fatal_failed = len(fatal_failed_params) > 0
-                
                 yes_points = sum(p["max_points"] for p in rubric_dict["parameters"] if scores.get(p["key"]) == "Yes")
                 applicable_points = sum(p["max_points"] for p in rubric_dict["parameters"] if scores.get(p["key"]) != "NA")
                 
-                if fatal_failed:
-                    final_score = 0
-                    pass_fail = "Fail"
-                else:
-                    final_score = round((yes_points / applicable_points) * 100) if applicable_points > 0 else 0
-                    pass_fail = "Pass" if final_score >= 85 else "Fail"
+                final_score = round((yes_points / applicable_points) * 100) if applicable_points > 0 else 0
+                pass_fail = "Pass" if final_score >= 85 else "Fail"
+                
+                fatal_failed = False
+                fatal_failed_params = []
                 
                 lsq_caveat = "Note: LSQ documentation and CRM tagging cannot be verified from transcript alone. Ownership score reflects verbal accuracy in the call only."
                 
