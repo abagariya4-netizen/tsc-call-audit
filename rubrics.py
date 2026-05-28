@@ -95,12 +95,30 @@ HUMAN_PARAMETERS = [
         "key": "closing",
         "name": "Closing",
         "max_points": 15,
-        "check": "Did agent inform next steps, ask if customer needed further help, provide brand closing (Sleep Well with The Sleep Company), and create urgency where appropriate? (If no evidence of closing or call cut prematurely, score NA)",
+        "check": (
+            "How the agent wraps up and ends the call. Read the FINAL portion of the transcript. Judge it as a fair human auditor would — consider what the customer did, not just what the agent said.\n"
+            "A strong close usually contains some or all of:\n"
+            "- Confirming clear next steps (callback time, delivery, store visit, order confirmation, follow-up)\n"
+            "- A brief recap of what was discussed or agreed\n"
+            "- Checking if the customer has any further questions\n"
+            "- A polite, branded sign-off (thanking the customer, 'The Sleep Company')\n"
+            "- Securing the commitment relevant to the call's purpose\n\n"
+            "How to decide the score — THINK LIKE A HUMAN AUDITOR, IN THIS ORDER:\n"
+            "STEP 1 — Did the agent even have the OPPORTUNITY to close?\n"
+            "Look at how the call ended. If the customer hung up abruptly, the line dropped, the customer ended the conversation mid-flow, or the transcript simply cuts off before any natural wrap-up point — the agent was NOT given the chance to close. In that case score 'NA'.\n"
+            "CRITICAL: NA is ONLY for 'no opportunity.' NEVER use NA just because the close was bad or missing. If the agent reached a natural end-of-call point and simply did a poor job, that is a SCORE, not NA.\n\n"
+            "STEP 2 — If the agent HAD the opportunity, score on the 0–15 scale:\n"
+            "13–15: Clean, complete close — next steps confirmed AND a clear recap or commitment AND a polite/branded sign-off.\n"
+            "8–12: Decent close but missing elements — e.g. signed off politely but didn't confirm next steps, or confirmed next steps but no recap, or rushed wrap-up. Give credit for what they did do.\n"
+            "4–7: Weak close — only a bare goodbye, no confirmation of anything, no recap, no commitment, but the agent did acknowledge the call was ending.\n"
+            "1–3: Barely any attempt — agent let the call fizzle out with almost nothing.\n"
+            "0: Agent clearly had the chance to close and did absolutely nothing — no sign-off, no next steps, no acknowledgement, just stopped."
+        ),
         "failure_modes": [
-            "Did not inform next steps",
+            "Did not confirm next steps",
             "Did not ask for further help and provide assurance",
-            "Missed brand closing",
-            "Did not create urgency while closing the call"
+            "Missed polite/branded sign-off",
+            "Barely any attempt or zero attempt when given the chance"
         ]
     }
 ]
