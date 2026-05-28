@@ -3,7 +3,7 @@ The 8 scoring rubrics for TSC call audits.
 One rubric per lead source. Each human rubric is worth 100 points and uses identical parameters.
 """
 
-RUBRIC_VERSION = "v7"
+RUBRIC_VERSION = "v8"
 
 # Standard unified parameters used for all 7 human agent rubrics (fatal parameter completely removed)
 HUMAN_PARAMETERS = [
