@@ -1,16 +1,17 @@
 """
-The 8 scoring rubrics for TSC call audits.
+The scoring rubrics for TSC call audits.
 One rubric per lead source. Each human rubric is worth 100 points and uses identical parameters.
 """
 
 RUBRIC_VERSION = "v8"
 
-# Standard unified parameters used for all 7 human agent rubrics (fatal parameter completely removed)
+# Standard unified parameters used for all rubrics
 HUMAN_PARAMETERS = [
     {
         "key": "greeting_introduction",
         "name": "Greeting & Introduction",
         "max_points": 5,
+        "fatal": False,
         "check": "Did agent greet the customer appropriately, introduce themselves and the company, and start within 3 seconds?",
         "failure_modes": [
             "Delay opening more than 3 seconds",
@@ -21,6 +22,7 @@ HUMAN_PARAMETERS = [
         "key": "understanding_customer_needs",
         "name": "Understanding Customer Needs",
         "max_points": 20,
+        "fatal": False,
         "check": "Did agent actively listen, ask relevant probing questions, acknowledge the customer query, and fully understand the customer specific needs?",
         "failure_modes": [
             "Agent did not actively listen to customer issue",
@@ -33,6 +35,7 @@ HUMAN_PARAMETERS = [
         "key": "sales_pitch",
         "name": "Sales Pitch",
         "max_points": 20,
+        "fatal": False,
         "check": "Did agent explain features and benefits of the product with confidence and product knowledge? Did agent pitch the right product for the customer needs?",
         "failure_modes": [
             "Did not explain features and benefits of the product",
@@ -43,6 +46,7 @@ HUMAN_PARAMETERS = [
         "key": "advisor_behaviour",
         "name": "Advisor Behaviour",
         "max_points": 5,
+        "fatal": True,
         "check": "Did agent maintain professional polite non-rude non-abrupt behaviour throughout the entire call?",
         "failure_modes": [
             "Rude and abrupt behaviour observed"
@@ -52,6 +56,7 @@ HUMAN_PARAMETERS = [
         "key": "complaint",
         "name": "Complaint",
         "max_points": 10,
+        "fatal": False,
         "check": "If customer raised a complaint was it acknowledged and addressed properly? If no complaint was raised score NA.",
         "failure_modes": [
             "Complaint not acknowledged or not addressed"
@@ -61,6 +66,7 @@ HUMAN_PARAMETERS = [
         "key": "ownership_resolution",
         "name": "Ownership & Resolution",
         "max_points": 10,
+        "fatal": True,
         "check": "Did agent take full ownership, provide correct and complete information, and manage the call properly end to end?",
         "failure_modes": [
             "Did not note the conversation or missing information",
@@ -73,6 +79,7 @@ HUMAN_PARAMETERS = [
         "key": "hold_mute",
         "name": "Hold & Mute",
         "max_points": 5,
+        "fatal": False,
         "check": "Did agent avoid dead air more than 10 seconds and long holds or mutes more than 120 seconds?",
         "failure_modes": [
             "Dead air more than 10 seconds",
@@ -83,6 +90,7 @@ HUMAN_PARAMETERS = [
         "key": "communication",
         "name": "Communication",
         "max_points": 10,
+        "fatal": False,
         "check": "Was agent tone professional, grammar correct, pace appropriate, and did agent avoid speaking over the customer?",
         "failure_modes": [
             "Tone of voice and grammatical errors",
@@ -95,6 +103,7 @@ HUMAN_PARAMETERS = [
         "key": "closing",
         "name": "Closing",
         "max_points": 15,
+        "fatal": False,
         "check": (
             "How the agent wraps up and ends the call. Read the FINAL portion of the transcript. Judge it as a fair human auditor would — consider what the customer did, not just what the agent said.\n"
             "A strong close usually contains some or all of:\n"
@@ -169,78 +178,7 @@ RUBRICS = {
     "ai_voice_bot": {
         "name": "AI Voice Bot",
         "description": "Automated call analysis. Evaluate conversation quality, understanding, latency, and loops.",
-        "parameters": [
-            {
-                "key": "greeting_introduction",
-                "name": "Opening",
-                "max_points": 5,
-                "check": "Did the bot greet professionally, identify The Sleep Company (TSC), and transition smoothly into the conversation?",
-                "failure_modes": ["Unprofessional or delayed opening"]
-            },
-            {
-                "key": "advisor_behaviour",
-                "name": "Bot Conduct / Robotic Delivery",
-                "max_points": 15,
-                "check": "Voice quality — natural pacing, clear pronunciation, no robotic monotone, appropriate inflection and warmth.",
-                "failure_modes": ["Robotic, scripted, or monotone delivery throughout"]
-            },
-            {
-                "key": "customer_understanding",
-                "name": "Customer Understanding",
-                "max_points": 20,
-                "check": "Did the bot correctly understand what the customer said, including Hindi/English code-switching, accents, partial sentences, and follow-up clarifications?",
-                "failure_modes": ["Misunderstood basic customer intent or responses"]
-            },
-            {
-                "key": "active_listening",
-                "name": "Active Listening",
-                "max_points": 10,
-                "check": "Did the bot wait for the customer to finish speaking, avoid interrupting mid-sentence, and verbally acknowledge what was said before responding?",
-                "failure_modes": ["Interrupted customer or failed to wait for speaking to end"]
-            },
-            {
-                "key": "need_identification",
-                "name": "Need Identification",
-                "max_points": 15,
-                "check": "Did the bot ask relevant qualifying questions to understand the customer's specific need or stage?",
-                "failure_modes": ["Failed to qualify customer needs or stage"]
-            },
-            {
-                "key": "information_accuracy",
-                "name": "Information Accuracy",
-                "max_points": 10,
-                "check": "Did the bot provide correct facts — pricing, product specs, store information, EMI details, offers — without making things up?",
-                "failure_modes": ["Gave wrong or hallucinated information"]
-            },
-            {
-                "key": "conversation_coherence",
-                "name": "Conversation Coherence",
-                "max_points": 10,
-                "check": "Logical conversation flow — no repetitive loops, no contradictions between turns, no nonsensical topic jumps.",
-                "failure_modes": ["Got stuck in repetitive loops or nonsensical topic jumps"]
-            },
-            {
-                "key": "ownership_resolution",
-                "name": "No Next Step / Wrong Product/Price",
-                "max_points": 10,
-                "check": "Did the bot push toward a clear next step appropriate to the customer's stage — callback from a human, store visit, link sent, or smooth handover to a human agent?",
-                "failure_modes": ["No clear call-to-action or wrong product/price recommendation"]
-            },
-            {
-                "key": "closing_confirmation",
-                "name": "Closing & Confirmation",
-                "max_points": 5,
-                "check": "Warm close, confirmation of next steps and any commitments made.",
-                "failure_modes": ["Abrupt hang up or poor closing"]
-            },
-            {
-                "key": "complaint",
-                "name": "Complaint",
-                "max_points": 0,
-                "check": "If customer raised a complaint, was it acknowledged and addressed? (NA in virtually all bot calls)",
-                "failure_modes": ["Complaint not acknowledged or addressed"]
-            }
-        ]
+        "parameters": HUMAN_PARAMETERS
     }
 }
 
